@@ -69,13 +69,32 @@ export function detectEndpointType(path: string): DetectedEndpoint {
 
 /**
  * Parse the requested model from a JSON body.
+ * Supports multiple provider body shapes so the gateway can do model
+ * discovery regardless of which native format the client uses:
+ *
+ *   OpenAI:     { "model": "gpt-4o", "messages": [...] }
+ *   v0:         { "message": "...", "modelConfiguration": { "modelId": "v0-max" } }
+ *   Generic:    { "modelId": "..." }
+ *
  * Returns null for endpoints that don't carry a model (e.g. /models).
  */
 export function parseModel(body: unknown): string | null {
   if (!body || typeof body !== "object") return null;
   const obj = body as Record<string, unknown>;
-  const model = obj.model;
-  if (typeof model === "string" && model.length > 0) return model;
+
+  // Standard OpenAI-style: { "model": "..." }
+  if (typeof obj.model === "string" && obj.model.length > 0) return obj.model;
+
+  // v0-style: { "modelConfiguration": { "modelId": "..." } }
+  const mc = obj.modelConfiguration;
+  if (mc && typeof mc === "object") {
+    const modelId = (mc as Record<string, unknown>).modelId;
+    if (typeof modelId === "string" && modelId.length > 0) return modelId;
+  }
+
+  // Generic alternative: { "modelId": "..." }
+  if (typeof obj.modelId === "string" && obj.modelId.length > 0) return obj.modelId;
+
   return null;
 }
 
