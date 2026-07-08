@@ -16,7 +16,7 @@ export function SettingsPanel() {
   const { user, logout } = useAuth();
 
   const quickStart = `# مثال باستخدام curl
-curl https://YOUR_DOMAIN/api/v1/chat/completions \\
+curl https://YOUR_DOMAIN/v1/chat/completions \\
   -H "Authorization: Bearer gw_xxx_YOUR_MASTER_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
@@ -28,7 +28,7 @@ curl https://YOUR_DOMAIN/api/v1/chat/completions \\
 from openai import OpenAI
 client = OpenAI(
     api_key="gw_xxx_YOUR_MASTER_KEY",
-    base_url="https://YOUR_DOMAIN/api/v1"
+    base_url="https://YOUR_DOMAIN/v1"
 )
 resp = client.chat.completions.create(
     model="gpt-4o",
@@ -89,7 +89,7 @@ resp = client.chat.completions.create(
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-2 text-sm text-muted-foreground">
-          <p>1. يصل الطلب إلى <code className="px-1 py-0.5 rounded bg-muted font-mono text-xs">/api/v1/*</code> مع مفتاحك الرئيسي.</p>
+          <p>1. يصل الطلب إلى <code className="px-1 py-0.5 rounded bg-muted font-mono text-xs">/v1/*</code> (أو <code className="px-1 py-0.5 rounded bg-muted font-mono text-xs">/api/v1/*</code>) مع مفتاحك الرئيسي.</p>
           <p>2. تتعرّف البوابة على نوع الـ Endpoint (chat, embeddings, images…).</p>
           <p>3. تبحث عن المزود الذي يدعم النموذج المطلوب.</p>
           <p>4. تختار مفتاحًا صحيًا وتُرسل الطلب بشفافية (فقط استبدال المفتاح).</p>

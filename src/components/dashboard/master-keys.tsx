@@ -112,7 +112,7 @@ export function MasterKeysPanel() {
             <p className="text-muted-foreground">
               أرسل طلباتك إلى{" "}
               <code className="px-1.5 py-0.5 rounded bg-muted font-mono text-xs" dir="ltr">
-                /api/v1/chat/completions
+                /v1/chat/completions
               </code>{" "}
               مع الترويسة{" "}
               <code className="px-1.5 py-0.5 rounded bg-muted font-mono text-xs" dir="ltr">
