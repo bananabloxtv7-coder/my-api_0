@@ -1,5 +1,6 @@
 import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
+import { invalidateUserCache } from "@/lib/proxy/cache";
 
 export const runtime = "nodejs";
 
@@ -33,6 +34,7 @@ export async function PATCH(
     where: { id: endpointId },
     data,
   });
+  invalidateUserCache(user.id);
   return Response.json({ endpoint: updated });
 }
 
@@ -51,5 +53,6 @@ export async function DELETE(
   if (!endpoint) return Response.json({ error: "Not found" }, { status: 404 });
 
   await db.providerEndpoint.delete({ where: { id: endpointId } });
+  invalidateUserCache(user.id);
   return Response.json({ ok: true });
 }

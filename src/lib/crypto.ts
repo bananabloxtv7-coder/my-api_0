@@ -1,13 +1,21 @@
 import crypto from "crypto";
+import { config } from "dotenv";
+import { existsSync } from "fs";
+import { resolve } from "path";
+
+// Ensure env is loaded (idempotent — dotenv only sets unset vars unless
+// override:true). Load .gateway.env first so sandbox .env resets don't win.
+const _gwPath = resolve(process.cwd(), ".gateway.env");
+if (existsSync(_gwPath)) config({ path: _gwPath, override: true });
+config({ override: true });
 
 /**
  * AES-256-GCM encryption for provider API keys at rest.
  * The encryption key is read from ENCRYPTION_KEY (64 hex chars = 32 bytes).
  */
 
-const KEY_HEX = process.env.ENCRYPTION_KEY || "";
-
 function getKey(): Buffer {
+  const KEY_HEX = process.env.ENCRYPTION_KEY || "";
   if (KEY_HEX.length !== 64) {
     throw new Error(
       "ENCRYPTION_KEY must be 64 hex chars (32 bytes). Set it in .env"

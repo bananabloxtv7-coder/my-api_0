@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
 import { audit, getClientIp } from "@/lib/audit";
+import { invalidateUserCache } from "@/lib/proxy/cache";
 
 export const runtime = "nodejs";
 
@@ -59,6 +60,7 @@ export async function PATCH(
     details: data,
     ipAddress: getClientIp(req),
   });
+  invalidateUserCache(user.id);
 
   return Response.json({ key: updated });
 }
@@ -86,6 +88,7 @@ export async function DELETE(
     entityId: keyId,
     ipAddress: getClientIp(req),
   });
+  invalidateUserCache(user.id);
 
   return Response.json({ ok: true });
 }

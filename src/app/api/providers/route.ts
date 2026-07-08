@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
 import { audit, getClientIp } from "@/lib/audit";
+import { invalidateUserCache } from "@/lib/proxy/cache";
 
 export const runtime = "nodejs";
 
@@ -95,6 +96,7 @@ export async function POST(req: Request) {
     details: { name: provider.name, baseUrl: provider.baseUrl },
     ipAddress: getClientIp(req),
   });
+  invalidateUserCache(user.id);
 
   return Response.json({ provider }, { status: 201 });
 }

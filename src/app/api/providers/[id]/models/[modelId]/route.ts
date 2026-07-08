@@ -1,5 +1,6 @@
 import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
+import { invalidateUserCache } from "@/lib/proxy/cache";
 
 export const runtime = "nodejs";
 
@@ -18,5 +19,6 @@ export async function DELETE(
   if (!model) return Response.json({ error: "Not found" }, { status: 404 });
 
   await db.model.delete({ where: { id: modelId } });
+  invalidateUserCache(user.id);
   return Response.json({ ok: true });
 }

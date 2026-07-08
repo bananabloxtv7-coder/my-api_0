@@ -2,6 +2,7 @@ import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
 import { encrypt, preview } from "@/lib/crypto";
 import { audit, getClientIp } from "@/lib/audit";
+import { invalidateUserCache } from "@/lib/proxy/cache";
 
 export const runtime = "nodejs";
 
@@ -97,6 +98,7 @@ export async function POST(
     details: { providerId: id, providerName: provider.name },
     ipAddress: getClientIp(req),
   });
+  invalidateUserCache(user.id);
 
   return Response.json({ key: created }, { status: 201 });
 }

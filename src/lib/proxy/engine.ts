@@ -5,8 +5,8 @@ import { classifyResponse } from "./errors";
 import {
   openaiToAnthropicRequest,
   anthropicToOpenAIResponse,
-  anthropicStreamToOpenAI,
 } from "./translate";
+import { getCachedProviders, type CachedProvider, type CachedKey } from "./cache";
 
 export interface ProxyResult {
   response: Response;
@@ -47,11 +47,23 @@ const STRIP_REQ_HEADERS = new Set([
   "x-gateway-token", // our own
 ]);
 
+/** Max bytes of an upstream error body to read for classification. */
+const MAX_ERROR_BODY = 2048;
+
 /**
  * Main transparent proxy entrypoint.
  *
- * @param req the incoming client request
- * @returns a streamed Response, or throws ProxyError
+ * Performance design:
+ *  - Provider/key graph is served from an in-memory cache (5s TTL) so routing
+ *    decisions don't hit the DB on the hot path.
+ *  - All DB WRITES (key health update, request log, master-key touch) are
+ *    fire-and-forget — they run in the background and never block the
+ *    request or the next key rotation. This is what makes key switching
+ *    "rocket-fast": a failed key triggers a background write while the
+ *    gateway immediately tries the next key.
+ *  - Error bodies are capped at 2KB so a huge upstream error page can't
+ *    stall classification.
+ *  - Key rotation is a tight CPU loop (filter+sort) over cached data.
  */
 export async function handleProxyRequest(req: Request): Promise<Response> {
   const startedAt = Date.now();
@@ -87,7 +99,7 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
 
   const masterKey = await db.masterApiKey.findUnique({
     where: { keyHash: sha256(masterKeyRaw) },
-    include: { user: true },
+    select: { id: true, userId: true, isActive: true },
   });
   if (!masterKey || !masterKey.isActive) {
     return jsonError(401, "Invalid or disabled API key.", meta);
@@ -106,36 +118,29 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
   const model = parseModel(bodyJson);
   meta.model = model;
 
-  // ── 4. Discover candidate providers ───────────────────────────────
-  const providers = await db.provider.findMany({
-    where: {
-      userId,
-      isActive: true,
-      endpoints: { some: { type: detected.type } },
-      apiKeys: { some: { isActive: true } },
-    },
-    include: {
-      endpoints: true,
-      models: { where: { isActive: true } },
-      apiKeys: {
-        where: { isActive: true },
-      },
-    },
-    orderBy: { priority: "desc" },
-  });
+  // ── 4. Discover candidate providers (from cache — hot path) ───────
+  const providers = await getCachedProviders(userId);
 
-  // Filter by model support: a provider matches if it has the model OR has no
-  // models configured (wildcard provider).
-  let candidates = providers;
+  // Only consider providers that have an endpoint of the requested type.
+  const withEndpoint = providers.filter((p) =>
+    p.endpoints.some((e) => e.type === detected.type)
+  );
+
+  // Filter by model support: a provider matches if it lists the model OR has
+  // no models configured (wildcard provider).
+  let candidates: CachedProvider[];
   if (model) {
-    candidates = providers.filter(
+    candidates = withEndpoint.filter(
       (p) => p.models.length === 0 || p.models.some((m) => m.name === model)
     );
-    // If no exact match, fall back to providers that explicitly list it OR wildcards
-    // (already covered). If still empty, try all providers with this endpoint.
     if (candidates.length === 0) {
-      candidates = providers;
+      // No provider explicitly supports this model — fall back to wildcards
+      // (providers with no models list) which might still accept it.
+      candidates = withEndpoint.filter((p) => p.models.length === 0);
+      if (candidates.length === 0) candidates = withEndpoint;
     }
+  } else {
+    candidates = withEndpoint;
   }
 
   if (candidates.length === 0) {
@@ -154,32 +159,35 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
     const endpoint = provider.endpoints.find((e) => e.type === detected.type);
     if (!endpoint) continue;
 
-    // Order keys: usable first (not in cooldown), least errors, oldest lastUsed
+    // Order keys: usable first (not disabled / not in cooldown), least
+    // errors, least recently used. Disabled keys are skipped entirely so a
+    // bad key never wastes an upstream round-trip.
     const usableKeys = provider.apiKeys
-      .filter(
-        (k) =>
-          k.isActive &&
-          (k.status === "active" ||
-            (k.cooldownUntil && k.cooldownUntil.getTime() < now))
-      )
+      .filter((k) => isKeyUsable(k, now))
       .sort((a, b) => {
-        const aErr = a.totalErrors;
-        const bErr = b.totalErrors;
-        if (aErr !== bErr) return aErr - bErr;
+        // Active (healthy) keys first
+        const aHealthy = a.status === "active" ? 0 : 1;
+        const bHealthy = b.status === "active" ? 0 : 1;
+        if (aHealthy !== bHealthy) return aHealthy - bHealthy;
+        // Then least errors
+        if (a.totalErrors !== b.totalErrors) return a.totalErrors - b.totalErrors;
+        // Then least recently used
         const aUsed = a.lastUsedAt?.getTime() ?? 0;
         const bUsed = b.lastUsedAt?.getTime() ?? 0;
-        return aUsed - bUsed; // least recently used first
+        return aUsed - bUsed;
       });
 
     if (usableKeys.length === 0) continue;
 
     for (const key of usableKeys) {
       meta.retried += 1;
+
       let decryptedKey: string;
       try {
         decryptedKey = decrypt(key.encryptedKey);
       } catch {
-        await markKey(key, { action: "disable", reason: "decrypt_failed" });
+        // Fire-and-forget: don't wait for DB write
+        markKeyBackground(key.id, { action: "disable", reason: "decrypt_failed" });
         continue;
       }
 
@@ -221,14 +229,11 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
       };
 
       // ── Protocol translation (optional) ──
-      // If the provider speaks Anthropic Messages API, convert the client's
-      // OpenAI-style body to Anthropic format before forwarding.
       const isAnthropicProvider = provider.protocol === "anthropic";
       if (bodyBuffer && method !== "GET" && method !== "HEAD") {
         if (isAnthropicProvider && bodyJson) {
           const translated = openaiToAnthropicRequest(bodyJson);
           init.body = JSON.stringify(translated);
-          // Anthropic requires these headers
           if (!fwdHeaders.has("anthropic-version")) {
             fwdHeaders.set("anthropic-version", "2023-06-01");
           }
@@ -236,24 +241,24 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
           init.body = bodyBuffer;
         }
       }
-      // Apply the provider's timeout so a hanging upstream doesn't block the
-      // gateway forever (and so DNS failures fail fast instead of hanging).
+
+      // Provider timeout so a hanging upstream doesn't block rotation.
       const timeoutMs = Math.min(Math.max(provider.timeoutMs || 120000, 5000), 300000);
       try {
         init.signal = AbortSignal.timeout(timeoutMs);
       } catch {
-        // AbortSignal.timeout may be unavailable in very old runtimes; ignore.
+        // AbortSignal.timeout may be unavailable in very old runtimes.
       }
 
       let upstream: Response;
       try {
         upstream = await fetch(target.toString(), init);
       } catch (err) {
-        // network error / timeout — provider down, try next key/provider
+        // network error / timeout — fire-and-forget the DB write, move on NOW
         const isTimeout =
           (err as Error).name === "TimeoutError" ||
           (err as Error).name === "AbortError";
-        await markKey(key, {
+        markKeyBackground(key.id, {
           action: "error",
           reason: isTimeout
             ? `timeout_${timeoutMs}ms`
@@ -264,23 +269,23 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
 
       const status = upstream.status;
 
-      // Success — stream the raw response back transparently
+      // ── Success — stream the raw response back transparently ──
       if (status >= 200 && status < 300) {
-        await markKey(key, { action: "ok", reason: "success" });
+        // Fire-and-forget: mark key healthy + log request + touch master key
+        markKeyBackground(key.id, { action: "ok", reason: "success" });
         meta.providerId = provider.id;
         meta.providerKeyId = key.id;
         meta.providerName = provider.name;
         meta.success = true;
 
-        // Build a transparent passthrough response
         const respHeaders = new Headers(upstream.headers);
-        respHeaders.delete("content-encoding"); // already decoded by fetch
+        respHeaders.delete("content-encoding");
         respHeaders.delete("content-length");
         respHeaders.delete("transfer-encoding");
         respHeaders.set("x-gateway-provider", provider.name);
         respHeaders.set("x-gateway-retries", String(meta.retried));
 
-        await logRequest({
+        logRequestBackground({
           userId,
           masterApiKeyId: masterKey.id,
           providerId: provider.id,
@@ -296,15 +301,14 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
           success: true,
           retried: meta.retried - 1,
         });
-        await touchMasterKey(masterKey.id);
+        touchMasterKeyBackground(masterKey.id);
 
-        // ── Protocol translation: convert Anthropic response → OpenAI ──
+        // ── Protocol translation: Anthropic response → OpenAI ──
         if (isAnthropicProvider) {
           const isStream = /text\/event-stream/i.test(
             upstream.headers.get("content-type") || ""
           );
           if (isStream) {
-            // Convert Anthropic SSE stream to OpenAI SSE stream
             const streamState = { model: model || "unknown", started: false };
             const transformed = translateAnthropicStream(upstream.body, streamState);
             respHeaders.set("content-type", "text/event-stream");
@@ -315,7 +319,6 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
               headers: respHeaders,
             });
           } else {
-            // Non-streaming: translate JSON response
             const respText = await upstream.text();
             const respJson = safeParseJson(respText);
             const translated = anthropicToOpenAIResponse(respJson);
@@ -334,10 +337,16 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
         });
       }
 
-      // Error — read body for classification
-      const errText = await upstream.text();
+      // ── Error — read up to 2KB of body for classification (capped) ──
+      const errText = await readCapped(upstream, MAX_ERROR_BODY);
       const verdict = classifyResponse(status, errText);
-      await markKey(key, { action: verdict.action, reason: verdict.reason, statusCode: status });
+
+      // Fire-and-forget: update key health in the background, keep rotating NOW
+      markKeyBackground(key.id, {
+        action: verdict.action,
+        reason: verdict.reason,
+        statusCode: status,
+      });
 
       // If it's a client error that isn't the key's fault, return it to the
       // client immediately (transparent behaviour — don't silently retry).
@@ -345,7 +354,7 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
         meta.providerId = provider.id;
         meta.providerKeyId = key.id;
         meta.providerName = provider.name;
-        await logRequest({
+        logRequestBackground({
           userId,
           masterApiKeyId: masterKey.id,
           providerId: provider.id,
@@ -362,7 +371,7 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
           retried: meta.retried - 1,
           error: `client_${status}`,
         });
-        await touchMasterKey(masterKey.id);
+        touchMasterKeyBackground(masterKey.id);
         return new Response(errText, {
           status,
           statusText: upstream.statusText,
@@ -370,13 +379,14 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
         });
       }
 
-      // Otherwise rotate to next key / provider
+      // Otherwise rotate to next key / provider immediately (DB writes are
+      // already firing in the background — no waiting).
       continue;
     }
   }
 
   // ── 6. All keys/providers exhausted ───────────────────────────────
-  await logRequest({
+  logRequestBackground({
     userId,
     masterApiKeyId: masterKey.id,
     providerId: meta.providerId,
@@ -393,7 +403,7 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
     retried: meta.retried,
     error: "all_keys_exhausted",
   });
-  await touchMasterKey(masterKey.id);
+  touchMasterKeyBackground(masterKey.id);
   return jsonError(
     502,
     `All provider keys exhausted for ${detected.type}${model ? ` / ${model}` : ""}. ${meta.retried} attempt(s) made.`,
@@ -403,9 +413,58 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
 
 // ───────────────────────── helpers ─────────────────────────
 
+/** A key is usable if it's active AND (healthy OR its cooldown has expired). */
+function isKeyUsable(k: CachedKey, now: number): boolean {
+  if (!k.isActive) return false;
+  if (k.status === "active") return true;
+  if (k.status === "disabled" || k.status === "exhausted") return false;
+  // rate_limited / quota_exceeded / error → usable if cooldown expired
+  if (k.cooldownUntil && k.cooldownUntil.getTime() < now) return true;
+  return false;
+}
+
+/** Read at most `maxBytes` from a response body as text. Prevents huge error
+ *  pages from stalling classification. */
+async function readCapped(res: Response, maxBytes: number): Promise<string> {
+  try {
+    const reader = res.body?.getReader();
+    if (!reader) {
+      // No streaming body — fall back to text()
+      const t = await res.text();
+      return t.length > maxBytes ? t.slice(0, maxBytes) : t;
+    }
+    const decoder = new TextDecoder();
+    let out = "";
+    let read = 0;
+    while (read < maxBytes) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      out += decoder.decode(value, { stream: true });
+      read += value?.byteLength ?? 0;
+    }
+    return out;
+  } catch {
+    return "";
+  }
+}
+
+function jsonError(status: number, message: string, meta: ProxyResult["meta"]): Response {
+  return Response.json(
+    { error: { message, type: "gateway_error", meta } },
+    { status }
+  );
+}
+
+function cleanRespHeaders(h: Headers): Headers {
+  const out = new Headers(h);
+  out.delete("content-encoding");
+  out.delete("content-length");
+  out.delete("transfer-encoding");
+  return out;
+}
+
 /**
  * Transform an Anthropic SSE stream into an OpenAI-compatible SSE stream.
- * Parses each `event:` / `data:` pair and re-emits OpenAI-style chunks.
  */
 function translateAnthropicStream(
   body: ReadableStream<Uint8Array> | null,
@@ -422,7 +481,9 @@ function translateAnthropicStream(
       }
       const reader = body.getReader();
       let buffer = "";
-      let currentEvent = "";
+
+      // Lazy import to avoid circular dependency at module load
+      const { anthropicStreamToOpenAI } = await import("./translate");
 
       try {
         while (true) {
@@ -430,7 +491,6 @@ function translateAnthropicStream(
           if (done) break;
           buffer += decoder.decode(value, { stream: true });
 
-          // SSE events are separated by double newlines
           const parts = buffer.split("\n\n");
           buffer = parts.pop() || "";
 
@@ -466,105 +526,92 @@ function translateAnthropicStream(
   });
 }
 
-function jsonError(status: number, message: string, meta: ProxyResult["meta"]): Response {
-  return Response.json(
-    { error: { message, type: "gateway_error", meta } },
-    { status }
-  );
-}
+// ───────────────────────── Background DB writers (fire-and-forget) ─────────────────────────
+//
+// These never throw into the request path. They run as detached promises so
+// the proxy loop can rotate keys instantly without waiting for any DB write.
 
-function cleanRespHeaders(h: Headers): Headers {
-  const out = new Headers(h);
-  out.delete("content-encoding");
-  out.delete("content-length");
-  out.delete("transfer-encoding");
-  return out;
-}
-
-interface KeyRef {
-  id: string;
-}
-
-/** Update a provider key's health state based on the classification action. */
-async function markKey(
-  key: KeyRef,
+function markKeyBackground(
+  keyId: string,
   opts: { action: string; reason: string; statusCode?: number }
-): Promise<void> {
-  const now = new Date();
-  const data: Record<string, unknown> = {
-    lastUsedAt: now,
-    lastErrorAt: now,
-  };
+): void {
+  void (async () => {
+    const now = new Date();
+    const data: Record<string, unknown> = {
+      lastUsedAt: now,
+      lastErrorAt: now,
+    };
 
-  switch (opts.action) {
-    case "ok":
-      data.status = "active";
-      data.cooldownUntil = null;
-      data.totalSuccess = { increment: 1 };
-      data.totalRequests = { increment: 1 };
-      data.lastError = null;
-      break;
-    case "disable":
-      data.status = "disabled";
-      data.isActive = false;
-      data.totalErrors = { increment: 1 };
-      data.totalRequests = { increment: 1 };
-      data.lastError = opts.reason;
-      break;
-    case "cooldown":
-      data.status = "rate_limited";
-      data.cooldownUntil = new Date(
-        now.getTime() +
-          (opts.reason.includes("quota") ||
-          opts.reason.includes("billing") ||
-          opts.reason.includes("daily")
-            ? 6 * 60 * 60 * 1000
-            : 60 * 1000)
-      );
-      data.totalErrors = { increment: 1 };
-      data.totalRequests = { increment: 1 };
-      data.lastError = opts.reason;
-      break;
-    case "error":
-      data.status = "error";
-      data.totalErrors = { increment: 1 };
-      data.totalRequests = { increment: 1 };
-      data.lastError = opts.reason;
-      data.cooldownUntil = new Date(now.getTime() + 5_000);
-      break;
-    default:
-      data.totalRequests = { increment: 1 };
-  }
+    switch (opts.action) {
+      case "ok":
+        data.status = "active";
+        data.cooldownUntil = null;
+        data.totalSuccess = { increment: 1 };
+        data.totalRequests = { increment: 1 };
+        data.lastError = null;
+        break;
+      case "disable":
+        data.status = "disabled";
+        data.isActive = false;
+        data.totalErrors = { increment: 1 };
+        data.totalRequests = { increment: 1 };
+        data.lastError = opts.reason;
+        break;
+      case "cooldown":
+        data.status = "rate_limited";
+        data.cooldownUntil = new Date(
+          now.getTime() +
+            (opts.reason.includes("quota") ||
+            opts.reason.includes("billing") ||
+            opts.reason.includes("daily")
+              ? 6 * 60 * 60 * 1000
+              : 60 * 1000)
+        );
+        data.totalErrors = { increment: 1 };
+        data.totalRequests = { increment: 1 };
+        data.lastError = opts.reason;
+        break;
+      case "error":
+        data.status = "error";
+        data.totalErrors = { increment: 1 };
+        data.totalRequests = { increment: 1 };
+        data.lastError = opts.reason;
+        data.cooldownUntil = new Date(now.getTime() + 5_000);
+        break;
+      default:
+        data.totalRequests = { increment: 1 };
+    }
 
-  try {
-    await db.providerApiKey.update({ where: { id: key.id }, data });
-    await db.keyHealthLog.create({
-      data: {
-        providerKeyId: key.id,
-        event: opts.action,
-        statusCode: opts.statusCode ?? null,
-        message: opts.reason,
-      },
-    });
-  } catch {
-    // best-effort
-  }
+    try {
+      await db.providerApiKey.update({ where: { id: keyId }, data });
+      await db.keyHealthLog.create({
+        data: {
+          providerKeyId: keyId,
+          event: opts.action,
+          statusCode: opts.statusCode ?? null,
+          message: opts.reason,
+        },
+      });
+    } catch {
+      // best-effort — never break the proxy loop
+    }
+  })();
 }
 
-/** Touch the master key's lastUsedAt. */
-async function touchMasterKey(id: string): Promise<void> {
-  try {
-    await db.masterApiKey.update({
-      where: { id },
-      data: { lastUsedAt: new Date() },
-    });
-  } catch {
-    // best-effort
-  }
+function touchMasterKeyBackground(id: string): void {
+  void (async () => {
+    try {
+      await db.masterApiKey.update({
+        where: { id },
+        data: { lastUsedAt: new Date() },
+      });
+    } catch {
+      // best-effort
+    }
+  })();
 }
 
-/** Persist a request log entry. Best-effort. */
-async function logRequest(opts: {
+interface LogRequestOpts {
   userId: string;
   masterApiKeyId: string;
   providerId: string | null;
@@ -580,28 +627,32 @@ async function logRequest(opts: {
   success: boolean;
   retried: number;
   error?: string;
-}): Promise<void> {
-  try {
-    await db.requestLog.create({
-      data: {
-        userId: opts.userId,
-        masterApiKeyId: opts.masterApiKeyId,
-        providerId: opts.providerId,
-        providerKeyId: opts.providerKeyId,
-        providerName: opts.providerName,
-        model: opts.model,
-        endpointType: opts.endpointType,
-        method: opts.method,
-        path: opts.path,
-        statusCode: opts.statusCode,
-        durationMs: opts.durationMs,
-        requestSize: opts.requestSize,
-        success: opts.success,
-        retried: opts.retried,
-        error: opts.error ?? null,
-      },
-    });
-  } catch {
-    // best-effort
-  }
+}
+
+function logRequestBackground(opts: LogRequestOpts): void {
+  void (async () => {
+    try {
+      await db.requestLog.create({
+        data: {
+          userId: opts.userId,
+          masterApiKeyId: opts.masterApiKeyId,
+          providerId: opts.providerId,
+          providerKeyId: opts.providerKeyId,
+          providerName: opts.providerName,
+          model: opts.model,
+          endpointType: opts.endpointType,
+          method: opts.method,
+          path: opts.path,
+          statusCode: opts.statusCode,
+          durationMs: opts.durationMs,
+          requestSize: opts.requestSize,
+          success: opts.success,
+          retried: opts.retried,
+          error: opts.error ?? null,
+        },
+      });
+    } catch {
+      // best-effort
+    }
+  })();
 }

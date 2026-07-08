@@ -1,5 +1,6 @@
 import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
+import { invalidateUserCache } from "@/lib/proxy/cache";
 
 export const runtime = "nodejs";
 
@@ -66,6 +67,7 @@ export async function POST(
     });
     created.push({ id: m.id, name: m.name });
   }
+  invalidateUserCache(user.id);
 
   return Response.json({ models: created }, { status: 201 });
 }

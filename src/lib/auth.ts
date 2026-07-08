@@ -3,9 +3,14 @@ import jwt from "jsonwebtoken";
 import { cookies } from "next/headers";
 import { db } from "@/lib/db";
 
-const JWT_SECRET = process.env.JWT_SECRET || "dev-fallback-secret-change-me";
-const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "7d";
 const COOKIE_NAME = "gw_session";
+
+function getJwtSecret(): string {
+  return process.env.JWT_SECRET || "dev-fallback-secret-change-me";
+}
+function getJwtExpiry(): string {
+  return process.env.JWT_EXPIRES_IN || "7d";
+}
 
 export interface JwtPayload {
   sub: string; // user id
@@ -28,13 +33,13 @@ export async function verifyPassword(
 
 /** Sign a JWT for a user. */
 export function signToken(payload: JwtPayload): string {
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+  return jwt.sign(payload, getJwtSecret(), { expiresIn: getJwtExpiry() });
 }
 
 /** Verify a JWT and return the payload (or null). */
 export function verifyToken(token: string): JwtPayload | null {
   try {
-    return jwt.verify(token, JWT_SECRET) as JwtPayload;
+    return jwt.verify(token, getJwtSecret()) as JwtPayload;
   } catch {
     return null;
   }
