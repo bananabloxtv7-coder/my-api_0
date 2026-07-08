@@ -217,15 +217,28 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
       if (bodyBuffer && method !== "GET" && method !== "HEAD") {
         init.body = bodyBuffer;
       }
+      // Apply the provider's timeout so a hanging upstream doesn't block the
+      // gateway forever (and so DNS failures fail fast instead of hanging).
+      const timeoutMs = Math.min(Math.max(provider.timeoutMs || 120000, 5000), 300000);
+      try {
+        init.signal = AbortSignal.timeout(timeoutMs);
+      } catch {
+        // AbortSignal.timeout may be unavailable in very old runtimes; ignore.
+      }
 
       let upstream: Response;
       try {
         upstream = await fetch(target.toString(), init);
       } catch (err) {
-        // network error — provider down, try next key/provider
+        // network error / timeout — provider down, try next key/provider
+        const isTimeout =
+          (err as Error).name === "TimeoutError" ||
+          (err as Error).name === "AbortError";
         await markKey(key, {
           action: "error",
-          reason: `network: ${(err as Error).message}`,
+          reason: isTimeout
+            ? `timeout_${timeoutMs}ms`
+            : `network: ${(err as Error).message}`,
         });
         continue;
       }

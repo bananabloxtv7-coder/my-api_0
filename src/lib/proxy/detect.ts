@@ -24,18 +24,31 @@ export interface DetectedEndpoint {
 }
 
 const PATH_RULES: Array<{ type: EndpointType; test: RegExp }> = [
-  { type: "chat", test: /\/chat\/completions$/ },
-  { type: "chat", test: /\/messages$/ }, // anthropic-style
-  { type: "chat", test: /\/(chat|conversation)(\/)?$/ },
-  { type: "models", test: /\/models$/ },
-  { type: "embeddings", test: /\/embeddings$/ },
-  { type: "images", test: /\/images\/(generations|variations|edits)$/ },
-  { type: "images", test: /\/images$/ },
-  { type: "audio", test: /\/audio\// },
-  { type: "responses", test: /\/responses$/ },
-  { type: "rerank", test: /\/rerank$/ },
-  { type: "moderation", test: /\/moderations$/ },
-  { type: "fine_tuning", test: /\/fine_tuning\// },
+  // ── Chat ── supports any of these provider path shapes:
+  //   /chat, /chats, /chat/completions, /chats/completions
+  //   /ai/chat, /v1/ai/chat, /openai/v1/chat/completions
+  //   /messages (Anthropic), /conversations, /conversation
+  { type: "chat", test: /\/chats?\/(completions|messages)$/i },
+  { type: "chat", test: /\/chats?$/i },
+  { type: "chat", test: /\/messages$/i },
+  { type: "chat", test: /\/conversations?$/i },
+  // ── Models ──
+  { type: "models", test: /\/models$/i },
+  // ── Embeddings ──
+  { type: "embeddings", test: /\/embeddings$/i },
+  // ── Images ──
+  { type: "images", test: /\/images\/(generations|variations|edits)$/i },
+  { type: "images", test: /\/images$/i },
+  // ── Audio ──
+  { type: "audio", test: /\/audio\//i },
+  // ── Responses (OpenAI Responses API) ──
+  { type: "responses", test: /\/responses$/i },
+  // ── Rerank ──
+  { type: "rerank", test: /\/reranks?$/i },
+  // ── Moderation ──
+  { type: "moderation", test: /\/moderations?$/i },
+  // ── Fine tuning ──
+  { type: "fine_tuning", test: /\/fine_tuning\//i },
 ];
 
 /** Detect the logical endpoint type from the requested path. */
