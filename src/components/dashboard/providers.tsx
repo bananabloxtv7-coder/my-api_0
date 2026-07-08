@@ -1105,7 +1105,7 @@ function ModelsManager({
   });
 
   const delMut = useMutation({
-    mutationFn: (id: string) => api.del(`/api/providers/${providerId}/models/${id}`),
+    mutationFn: (id: string) => api.del(`/api/providers/${providerId}/models?modelId=${id}`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["provider", providerId] });
       qc.invalidateQueries({ queryKey: ["providers"] });

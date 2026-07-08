@@ -71,3 +71,28 @@ export async function POST(
 
   return Response.json({ models: created }, { status: 201 });
 }
+
+/** DELETE /api/providers/[id]/models?modelId=xxx — delete a single model */
+export async function DELETE(
+  req: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const user = await getCurrentUser();
+  if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
+  const { id } = await params;
+
+  const url = new URL(req.url);
+  const modelId = url.searchParams.get("modelId");
+  if (!modelId) {
+    return Response.json({ error: "modelId query parameter is required" }, { status: 400 });
+  }
+
+  const model = await db.model.findFirst({
+    where: { id: modelId, providerId: id, provider: { userId: user.id } },
+  });
+  if (!model) return Response.json({ error: "Not found" }, { status: 404 });
+
+  await db.model.delete({ where: { id: modelId } });
+  invalidateUserCache(user.id);
+  return Response.json({ ok: true });
+}
