@@ -6,7 +6,7 @@ import {
   openaiToAnthropicRequest,
   anthropicToOpenAIResponse,
 } from "./translate";
-import { getCachedProviders, type CachedProvider, type CachedKey } from "./cache";
+import { getCachedProviders, markKeyStateInCache, markKeyInFlight, clearKeyInFlight, isKeyInFlight, type CachedProvider, type CachedKey } from "./cache";
 
 export interface ProxyResult {
   response: Response;
@@ -159,11 +159,11 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
     const endpoint = provider.endpoints.find((e) => e.type === detected.type);
     if (!endpoint) continue;
 
-    // Order keys: usable first (not disabled / not in cooldown), least
-    // errors, least recently used. Disabled keys are skipped entirely so a
-    // bad key never wastes an upstream round-trip.
+    // Order keys: usable first (not disabled / not in cooldown / not
+    // in-flight), least errors, least recently used. Disabled and in-flight
+    // keys are skipped entirely so a bad or busy key never wastes a round-trip.
     const usableKeys = provider.apiKeys
-      .filter((k) => isKeyUsable(k, now))
+      .filter((k) => isKeyUsable(k, now) && !isKeyInFlight(k.id))
       .sort((a, b) => {
         // Active (healthy) keys first
         const aHealthy = a.status === "active" ? 0 : 1;
@@ -180,14 +180,23 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
     if (usableKeys.length === 0) continue;
 
     for (const key of usableKeys) {
+      // Re-check usability RIGHT BEFORE trying — a concurrent request may
+      // have disabled this key or put it in cooldown while we were iterating.
+      // This double-check is what makes concurrent bursts efficient: we never
+      // waste an HTTP call on a key that was just marked bad by a sibling.
+      if (!isKeyUsable(key, Date.now()) || isKeyInFlight(key.id)) {
+        continue;
+      }
       meta.retried += 1;
+      // Mark in-flight so concurrent requests skip this key while we try it
+      markKeyInFlight(key.id);
 
       let decryptedKey: string;
       try {
         decryptedKey = decrypt(key.encryptedKey);
       } catch {
-        // Fire-and-forget: don't wait for DB write
-        markKeyBackground(key.id, { action: "disable", reason: "decrypt_failed" });
+        clearKeyInFlight(key.id);
+        markKeyBackground(userId, key.id, { action: "disable", reason: "decrypt_failed" });
         continue;
       }
 
@@ -255,10 +264,11 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
         upstream = await fetch(target.toString(), init);
       } catch (err) {
         // network error / timeout — fire-and-forget the DB write, move on NOW
+        clearKeyInFlight(key.id);
         const isTimeout =
           (err as Error).name === "TimeoutError" ||
           (err as Error).name === "AbortError";
-        markKeyBackground(key.id, {
+        markKeyBackground(userId, key.id, {
           action: "error",
           reason: isTimeout
             ? `timeout_${timeoutMs}ms`
@@ -271,8 +281,8 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
 
       // ── Success — stream the raw response back transparently ──
       if (status >= 200 && status < 300) {
-        // Fire-and-forget: mark key healthy + log request + touch master key
-        markKeyBackground(key.id, { action: "ok", reason: "success" });
+        clearKeyInFlight(key.id);
+        markKeyBackground(userId, key.id, { action: "ok", reason: "success" });
         meta.providerId = provider.id;
         meta.providerKeyId = key.id;
         meta.providerName = provider.name;
@@ -341,8 +351,9 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
       const errText = await readCapped(upstream, MAX_ERROR_BODY);
       const verdict = classifyResponse(status, errText);
 
-      // Fire-and-forget: update key health in the background, keep rotating NOW
-      markKeyBackground(key.id, {
+      // Clear in-flight + fire-and-forget: update key health, keep rotating NOW
+      clearKeyInFlight(key.id);
+      markKeyBackground(userId, key.id, {
         action: verdict.action,
         reason: verdict.reason,
         statusCode: status,
@@ -532,11 +543,54 @@ function translateAnthropicStream(
 // the proxy loop can rotate keys instantly without waiting for any DB write.
 
 function markKeyBackground(
+  userId: string,
   keyId: string,
   opts: { action: string; reason: string; statusCode?: number }
 ): void {
+  const now = new Date();
+
+  // ── 1. Update the in-memory cache INSTANTLY (synchronous, no await) ──
+  // This is what makes rotation rocket-fast: the very next request in the
+  // same burst sees the key as disabled/cooldown and skips it without
+  // wasting an HTTP call. Without this, a 5s cache window would re-try
+  // the dead key on every concurrent request.
+  const cooldownMs =
+    opts.action === "cooldown"
+      ? opts.reason.includes("quota") ||
+        opts.reason.includes("billing") ||
+        opts.reason.includes("daily")
+        ? 6 * 60 * 60 * 1000
+        : 60 * 1000
+      : opts.action === "error"
+      ? 5_000
+      : 0;
+
+  const cacheUpdates: Partial<CachedKey> = {
+    lastUsedAt: now,
+    lastError: opts.action === "ok" ? null : opts.reason,
+  };
+  switch (opts.action) {
+    case "ok":
+      cacheUpdates.status = "active";
+      cacheUpdates.cooldownUntil = null;
+      break;
+    case "disable":
+      cacheUpdates.status = "disabled";
+      cacheUpdates.isActive = false;
+      break;
+    case "cooldown":
+      cacheUpdates.status = "rate_limited";
+      cacheUpdates.cooldownUntil = new Date(now.getTime() + cooldownMs);
+      break;
+    case "error":
+      cacheUpdates.status = "error";
+      cacheUpdates.cooldownUntil = new Date(now.getTime() + cooldownMs);
+      break;
+  }
+  markKeyStateInCache(userId, keyId, cacheUpdates);
+
+  // ── 2. Fire the DB write in the background (detached, never blocks) ──
   void (async () => {
-    const now = new Date();
     const data: Record<string, unknown> = {
       lastUsedAt: now,
       lastErrorAt: now,
@@ -559,14 +613,7 @@ function markKeyBackground(
         break;
       case "cooldown":
         data.status = "rate_limited";
-        data.cooldownUntil = new Date(
-          now.getTime() +
-            (opts.reason.includes("quota") ||
-            opts.reason.includes("billing") ||
-            opts.reason.includes("daily")
-              ? 6 * 60 * 60 * 1000
-              : 60 * 1000)
-        );
+        data.cooldownUntil = new Date(now.getTime() + cooldownMs);
         data.totalErrors = { increment: 1 };
         data.totalRequests = { increment: 1 };
         data.lastError = opts.reason;
@@ -576,7 +623,7 @@ function markKeyBackground(
         data.totalErrors = { increment: 1 };
         data.totalRequests = { increment: 1 };
         data.lastError = opts.reason;
-        data.cooldownUntil = new Date(now.getTime() + 5_000);
+        data.cooldownUntil = new Date(now.getTime() + cooldownMs);
         break;
       default:
         data.totalRequests = { increment: 1 };

@@ -49,10 +49,81 @@ const TTL_MS = 5_000; // 5s — picks up admin edits fast, serves bursts instant
 const cache = new Map<string, CacheEntry>();
 const versions = new Map<string, number>();
 
+/**
+ * In-flight key tracking: when a request starts using a key, we mark it
+ * "in-flight" so concurrent requests skip it and go to the next key
+ * immediately. This prevents N concurrent requests from all hammering the
+ * same dead key simultaneously.
+ *
+ * Entries auto-expire after 30s as a safety net (in case a request hangs).
+ */
+const IN_FLIGHT_TTL_MS = 30_000;
+const inFlight = new Map<string, number>(); // keyId -> expiresAt
+
+/** Mark a key as in-flight (being tried right now). */
+export function markKeyInFlight(keyId: string): void {
+  inFlight.set(keyId, Date.now() + IN_FLIGHT_TTL_MS);
+}
+
+/** Clear the in-flight marker (request finished, success or fail). */
+export function clearKeyInFlight(keyId: string): void {
+  inFlight.delete(keyId);
+}
+
+/** Check if a key is currently in-flight (being tried by another request). */
+export function isKeyInFlight(keyId: string): boolean {
+  const expiresAt = inFlight.get(keyId);
+  if (!expiresAt) return false;
+  if (Date.now() > expiresAt) {
+    inFlight.delete(keyId);
+    return false;
+  }
+  return true;
+}
+
+// Periodic cleanup of stale in-flight entries
+if (typeof setInterval !== "undefined") {
+  setInterval(() => {
+    const now = Date.now();
+    for (const [k, exp] of inFlight) {
+      if (now > exp) inFlight.delete(k);
+    }
+  }, 60_000).unref?.();
+}
+
 /** Mark a user's cache as stale. Call after any provider/key/endpoint/model mutation. */
 export function invalidateUserCache(userId: string): void {
   versions.set(userId, (versions.get(userId) ?? 0) + 1);
   cache.delete(userId);
+}
+
+/**
+ * Synchronously update a single key's state in the in-memory cache.
+ *
+ * This is the KEY to rocket-fast rotation: when a key fails during a request,
+ * we mark it disabled/cooldown in memory IMMEDIATELY (no DB round-trip, no
+ * await) so the very next request in the same burst skips it. The DB write
+ * happens in the background via markKeyBackground().
+ *
+ * Without this, a burst of requests within the 5s cache TTL would all try
+ * the same dead key (wasting an HTTP call each time) before the cache
+ * refreshes from DB.
+ */
+export function markKeyStateInCache(
+  userId: string,
+  keyId: string,
+  updates: Partial<Pick<CachedKey, "status" | "isActive" | "cooldownUntil" | "lastError" | "lastUsedAt" | "totalErrors" | "totalSuccess" | "totalRequests">>
+): void {
+  const entry = cache.get(userId);
+  if (!entry) return;
+  for (const provider of entry.data) {
+    for (const key of provider.apiKeys) {
+      if (key.id === keyId) {
+        Object.assign(key, updates);
+        return;
+      }
+    }
+  }
 }
 
 /** Fetch the cached provider graph, refreshing from DB if stale or invalidated. */
