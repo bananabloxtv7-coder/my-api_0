@@ -28,6 +28,7 @@ interface CreateProviderBody {
   baseUrl: string;
   authHeader?: string;
   authScheme?: string;
+  protocol?: string;
   priority?: number;
   timeoutMs?: number;
   isActive?: boolean;
@@ -64,6 +65,7 @@ export async function POST(req: Request) {
       baseUrl: body.baseUrl.trim().replace(/\/+$/, ""),
       authHeader: body.authHeader?.trim() || "Authorization",
       authScheme: body.authScheme?.trim() || "bearer",
+      protocol: body.protocol?.trim() || "transparent",
       priority: body.priority ?? 0,
       timeoutMs: body.timeoutMs ?? 120000,
       isActive: body.isActive ?? true,

@@ -75,6 +75,7 @@ interface ProviderListItem {
   priority: number;
   authHeader: string;
   authScheme: string;
+  protocol: string;
   _count: { apiKeys: number; endpoints: number; models: number };
   endpoints: Array<{ id: string; type: string; path: string; method: string }>;
 }
@@ -117,6 +118,11 @@ const AUTH_SCHEMES = [
   { value: "bearer", label: "Bearer Token (Authorization: Bearer …)" },
   { value: "x-api-key", label: "X-API-Key header" },
   { value: "raw", label: "Raw value in custom header" },
+];
+
+const PROTOCOLS = [
+  { value: "transparent", label: "شفاف (Transparent) — لا تحويل" },
+  { value: "anthropic", label: "Anthropic — تحويل OpenAI → Claude تلقائياً" },
 ];
 
 // ───────────────────────── Main Panel ─────────────────────────
@@ -284,6 +290,11 @@ function ProviderCard({
           <Badge variant="outline" className="font-mono">
             {provider.authScheme}
           </Badge>
+          {provider.protocol === "anthropic" && (
+            <Badge className="bg-violet-500/15 text-violet-600 dark:text-violet-400 hover:bg-violet-500/15">
+              Anthropic
+            </Badge>
+          )}
         </div>
         <div className="grid grid-cols-3 gap-2 text-center">
           <Stat icon={<KeyRound className="w-3.5 h-3.5" />} value={provider._count.apiKeys} label="مفاتيح" />
@@ -327,6 +338,7 @@ function ProviderFormDialog({
   const [baseUrl, setBaseUrl] = useState("");
   const [authScheme, setAuthScheme] = useState("bearer");
   const [authHeader, setAuthHeader] = useState("Authorization");
+  const [protocol, setProtocol] = useState("transparent");
   const [priority, setPriority] = useState("0");
   const [endpoints, setEndpoints] = useState<Array<{ type: string; path: string }>>(ENDPOINT_PRESETS);
   const [modelsText, setModelsText] = useState("");
@@ -343,6 +355,7 @@ function ProviderFormDialog({
     setBaseUrl("");
     setAuthScheme("bearer");
     setAuthHeader("Authorization");
+    setProtocol("transparent");
     setPriority("0");
     setEndpoints(ENDPOINT_PRESETS);
     setModelsText("");
@@ -354,6 +367,7 @@ function ProviderFormDialog({
       setBaseUrl(editing.baseUrl);
       setAuthScheme(editing.authScheme);
       setAuthHeader(editing.authHeader);
+      setProtocol(editing.protocol || "transparent");
       setPriority(String(editing.priority));
       setEndpoints(
         editing.endpoints.length > 0
@@ -383,6 +397,7 @@ function ProviderFormDialog({
           baseUrl: baseUrl.trim(),
           authScheme,
           authHeader,
+          protocol,
           priority: parseInt(priority) || 0,
         });
         toast.success("تم تحديث المزود");
@@ -392,6 +407,7 @@ function ProviderFormDialog({
           baseUrl: baseUrl.trim(),
           authScheme,
           authHeader,
+          protocol,
           priority: parseInt(priority) || 0,
           endpoints,
           models,
@@ -486,6 +502,27 @@ function ProviderFormDialog({
                 dir="ltr"
               />
             </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label>البروتوكول (Protocol Translation)</Label>
+            <Select value={protocol} onValueChange={setProtocol}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {PROTOCOLS.map((p) => (
+                  <SelectItem key={p.value} value={p.value}>
+                    {p.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              استخدم <b>Anthropic</b> إذا كان المزود يستخدم بنية Claude Messages API
+              (مثل Anthropic نفسها أو مزود موحد يدعم claude). تحوّل البوابة طلبات
+              OpenAI تلقائياً إلى بنية Anthropic وتعيد الرد بصيغة OpenAI.
+            </p>
           </div>
 
           {!editing && (

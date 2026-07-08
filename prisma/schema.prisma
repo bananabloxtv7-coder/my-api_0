@@ -54,6 +54,11 @@ model Provider {
   baseUrl   String
   authHeader String  @default("Authorization") // header used to send provider key
   authScheme String  @default("bearer") // bearer | raw | x-api-key
+  // Protocol translation: transparent (pass-through, default) | anthropic
+  // (convert OpenAI-style request bodies to Anthropic-style before forwarding,
+  // and convert the Anthropic response back to OpenAI style). Use "anthropic"
+  // for providers that speak the Anthropic Messages API (claude-* models).
+  protocol  String   @default("transparent")
   isActive  Boolean  @default(true)
   priority  Int      @default(0) // higher = preferred when multiple providers support a model
   timeoutMs Int      @default(120000)

@@ -2,6 +2,11 @@ import { db } from "@/lib/db";
 import { decrypt, sha256 } from "@/lib/crypto";
 import { detectEndpointType, parseModel, safeParseJson, type EndpointType } from "./detect";
 import { classifyResponse } from "./errors";
+import {
+  openaiToAnthropicRequest,
+  anthropicToOpenAIResponse,
+  anthropicStreamToOpenAI,
+} from "./translate";
 
 export interface ProxyResult {
   response: Response;
@@ -214,8 +219,22 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
         headers: fwdHeaders,
         redirect: "follow",
       };
+
+      // ── Protocol translation (optional) ──
+      // If the provider speaks Anthropic Messages API, convert the client's
+      // OpenAI-style body to Anthropic format before forwarding.
+      const isAnthropicProvider = provider.protocol === "anthropic";
       if (bodyBuffer && method !== "GET" && method !== "HEAD") {
-        init.body = bodyBuffer;
+        if (isAnthropicProvider && bodyJson) {
+          const translated = openaiToAnthropicRequest(bodyJson);
+          init.body = JSON.stringify(translated);
+          // Anthropic requires these headers
+          if (!fwdHeaders.has("anthropic-version")) {
+            fwdHeaders.set("anthropic-version", "2023-06-01");
+          }
+        } else {
+          init.body = bodyBuffer;
+        }
       }
       // Apply the provider's timeout so a hanging upstream doesn't block the
       // gateway forever (and so DNS failures fail fast instead of hanging).
@@ -278,6 +297,35 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
           retried: meta.retried - 1,
         });
         await touchMasterKey(masterKey.id);
+
+        // ── Protocol translation: convert Anthropic response → OpenAI ──
+        if (isAnthropicProvider) {
+          const isStream = /text\/event-stream/i.test(
+            upstream.headers.get("content-type") || ""
+          );
+          if (isStream) {
+            // Convert Anthropic SSE stream to OpenAI SSE stream
+            const streamState = { model: model || "unknown", started: false };
+            const transformed = translateAnthropicStream(upstream.body, streamState);
+            respHeaders.set("content-type", "text/event-stream");
+            respHeaders.set("cache-control", "no-cache");
+            return new Response(transformed, {
+              status,
+              statusText: upstream.statusText,
+              headers: respHeaders,
+            });
+          } else {
+            // Non-streaming: translate JSON response
+            const respText = await upstream.text();
+            const respJson = safeParseJson(respText);
+            const translated = anthropicToOpenAIResponse(respJson);
+            return new Response(JSON.stringify(translated), {
+              status,
+              statusText: upstream.statusText,
+              headers: respHeaders,
+            });
+          }
+        }
 
         return new Response(upstream.body, {
           status,
@@ -354,6 +402,69 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
 }
 
 // ───────────────────────── helpers ─────────────────────────
+
+/**
+ * Transform an Anthropic SSE stream into an OpenAI-compatible SSE stream.
+ * Parses each `event:` / `data:` pair and re-emits OpenAI-style chunks.
+ */
+function translateAnthropicStream(
+  body: ReadableStream<Uint8Array> | null,
+  state: { model: string; started: boolean }
+): ReadableStream<Uint8Array> {
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+
+  return new ReadableStream({
+    async start(controller) {
+      if (!body) {
+        controller.close();
+        return;
+      }
+      const reader = body.getReader();
+      let buffer = "";
+      let currentEvent = "";
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          // SSE events are separated by double newlines
+          const parts = buffer.split("\n\n");
+          buffer = parts.pop() || "";
+
+          for (const part of parts) {
+            const lines = part.split("\n");
+            let evt = "";
+            let dataStr = "";
+            for (const line of lines) {
+              if (line.startsWith("event:")) evt = line.slice(6).trim();
+              else if (line.startsWith("data:")) dataStr += line.slice(5).trim();
+            }
+            if (!evt && !dataStr) continue;
+            let data: unknown = null;
+            if (dataStr) {
+              try {
+                data = JSON.parse(dataStr);
+              } catch {
+                data = dataStr;
+              }
+            }
+            const chunk = anthropicStreamToOpenAI(evt, data, state);
+            if (chunk) {
+              controller.enqueue(encoder.encode(chunk));
+            }
+          }
+        }
+      } catch (err) {
+        controller.error(err);
+        return;
+      }
+      controller.close();
+    },
+  });
+}
 
 function jsonError(status: number, message: string, meta: ProxyResult["meta"]): Response {
   return Response.json(

@@ -78,6 +78,7 @@ export async function PATCH(
     "baseUrl",
     "authHeader",
     "authScheme",
+    "protocol",
     "priority",
     "timeoutMs",
     "isActive",
