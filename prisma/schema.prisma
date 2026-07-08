@@ -1,0 +1,182 @@
+// Smart API Gateway — Enterprise schema (PostgreSQL / Supabase)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ───────────────────────── Users & Auth ─────────────────────────
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String?
+  role         String   @default("user") // user | admin
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  masterApiKeys MasterApiKey[]
+  providers     Provider[]
+  auditLogs     AuditLog[]
+  requestLogs   RequestLog[]
+}
+
+model MasterApiKey {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name       String
+  keyHash    String    @unique // sha256 hash for fast lookup
+  keyPrefix  String    // e.g. "gw-..." first segment for display
+  keyPreview String    // last 4 chars
+  isActive   Boolean   @default(true)
+  createdAt  DateTime  @default(now())
+  lastUsedAt DateTime?
+
+  requestLogs RequestLog[]
+
+  @@index([userId])
+}
+
+// ───────────────────────── Providers & Keys ─────────────────────────
+
+model Provider {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  baseUrl   String
+  authHeader String  @default("Authorization") // header used to send provider key
+  authScheme String  @default("bearer") // bearer | raw | x-api-key
+  isActive  Boolean  @default(true)
+  priority  Int      @default(0) // higher = preferred when multiple providers support a model
+  timeoutMs Int      @default(120000)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  apiKeys   ProviderApiKey[]
+  endpoints ProviderEndpoint[]
+  models    Model[]
+
+  @@index([userId])
+  @@index([userId, isActive])
+}
+
+/// Dynamic endpoint mapping per provider.
+/// type is the logical endpoint kind the gateway exposes to clients.
+/// path is the actual path on the provider.
+model ProviderEndpoint {
+  id         String   @id @default(cuid())
+  providerId String
+  provider   Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  type       String   // chat | models | embeddings | images | audio | responses | rerank | moderation | fine_tuning | custom
+  path       String   // e.g. /v1/chat/completions
+  method     String   @default("POST")
+  createdAt  DateTime @default(now())
+
+  @@unique([providerId, type])
+  @@index([providerId])
+}
+
+model ProviderApiKey {
+  id            String    @id @default(cuid())
+  providerId    String
+  provider      Provider  @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  name          String?
+  encryptedKey  String    // AES-256-GCM encrypted
+  keyPreview    String    // last 4 chars for display
+  isActive      Boolean   @default(true)
+  // Health state machine
+  status        String    @default("active") // active | cooldown | rate_limited | quota_exceeded | disabled | error | exhausted
+  lastError     String?
+  lastErrorAt   DateTime?
+  lastUsedAt    DateTime?
+  cooldownUntil DateTime?
+  totalRequests Int       @default(0)
+  totalErrors   Int       @default(0)
+  totalSuccess  Int       @default(0)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  healthLogs KeyHealthLog[]
+
+  @@index([providerId, isActive])
+  @@index([providerId, status])
+  @@index([status, cooldownUntil])
+}
+
+model Model {
+  id          String   @id @default(cuid())
+  providerId  String
+  provider    Provider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  name        String   // e.g. gpt-4o
+  displayName String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  @@unique([providerId, name])
+  @@index([name])
+  @@index([providerId])
+}
+
+// ───────────────────────── Logs & Stats ─────────────────────────
+
+model RequestLog {
+  id             String   @id @default(cuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  masterApiKeyId String?
+  masterApiKey   MasterApiKey? @relation(fields: [masterApiKeyId], references: [id], onDelete: SetNull)
+  providerId     String?
+  providerKeyId  String?
+  providerName   String?
+  model          String?
+  endpointType   String?  // chat | embeddings | ...
+  method         String
+  path           String
+  statusCode     Int?
+  durationMs     Int?
+  requestSize    Int?
+  responseSize   Int?
+  error          String?
+  success        Boolean
+  retried        Int      @default(0) // number of key/provider switches
+  createdAt      DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([providerId])
+  @@index([masterApiKeyId])
+  @@index([createdAt])
+}
+
+model KeyHealthLog {
+  id            String   @id @default(cuid())
+  providerKeyId String
+  providerKey   ProviderApiKey @relation(fields: [providerKeyId], references: [id], onDelete: Cascade)
+  event         String   // success | error | rate_limit | quota_exceeded | auth_error | disabled | cooldown_set
+  statusCode    Int?
+  message       String?
+  createdAt     DateTime @default(now())
+
+  @@index([providerKeyId, createdAt])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  action    String   // create_provider | delete_key | login | ...
+  entity    String?
+  entityId  String?
+  details   String?  // JSON string
+  ipAddress String?
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+}
