@@ -36,14 +36,9 @@ const PATH_RULES: Array<{ type: EndpointType; test: RegExp }> = [
   { type: "models", test: /\/models$/i },
   // ── Embeddings ──
   { type: "embeddings", test: /\/embeddings$/i },
-  // ── Images ── (also match /img/ as alias since some platforms intercept /images/)
-  // Also match /gen, /create, /generate as aliases for /generations since
-  // some platforms (e.g. v0 on Vercel) intercept paths containing "generations".
+  // ── Images ──
   { type: "images", test: /\/images\/(generations|variations|edits)$/i },
-  { type: "images", test: /\/img\/(generations|variations|edits)$/i },
-  { type: "images", test: /\/img\/(gen|create|generate|generation)$/i },
   { type: "images", test: /\/images$/i },
-  { type: "images", test: /\/img$/i },
   // ── Audio ──
   { type: "audio", test: /\/audio\//i },
   // ── Responses (OpenAI Responses API) ──
@@ -58,10 +53,8 @@ const PATH_RULES: Array<{ type: EndpointType; test: RegExp }> = [
 
 /** Detect the logical endpoint type from the requested path. */
 export function detectEndpointType(path: string): DetectedEndpoint {
-  // Strip all mount prefixes: /gw/v1, /proxy/v1, /api/v1, /v1
+  // Strip mount prefixes: /api/v1 and /v1
   const normalized = path
-    .replace(/^\/gw\/v1/i, "")
-    .replace(/^\/proxy\/v1/i, "")
     .replace(/^\/api\/v1/i, "")
     .replace(/^\/v1/i, "")
     .replace(/^\/+/, "/");
