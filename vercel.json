@@ -2,15 +2,14 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
   "buildCommand": "prisma generate && next build",
-  "rewrites": [
-    { "source": "/v1/(.*)", "destination": "/v1/$1" },
-    { "source": "/api/v1/(.*)", "destination": "/api/v1/$1" }
-  ],
   "functions": {
     "src/app/api/v1/[...path]/route.ts": {
       "maxDuration": 60
     },
     "src/app/v1/[...path]/route.ts": {
+      "maxDuration": 60
+    },
+    "src/app/proxy/v1/[...path]/route.ts": {
       "maxDuration": 60
     }
   }

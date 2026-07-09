@@ -53,9 +53,9 @@ const PATH_RULES: Array<{ type: EndpointType; test: RegExp }> = [
 
 /** Detect the logical endpoint type from the requested path. */
 export function detectEndpointType(path: string): DetectedEndpoint {
-  // Strip both /api/v1 and /v1 mount prefixes so the proxy works whether the
-  // client calls /api/v1/chat/completions or /v1/chat/completions.
+  // Strip all mount prefixes: /proxy/v1, /api/v1, /v1
   const normalized = path
+    .replace(/^\/proxy\/v1/i, "")
     .replace(/^\/api\/v1/i, "")
     .replace(/^\/v1/i, "")
     .replace(/^\/+/, "/");
