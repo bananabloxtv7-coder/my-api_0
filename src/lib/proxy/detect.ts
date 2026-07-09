@@ -37,8 +37,11 @@ const PATH_RULES: Array<{ type: EndpointType; test: RegExp }> = [
   // ── Embeddings ──
   { type: "embeddings", test: /\/embeddings$/i },
   // ── Images ── (also match /img/ as alias since some platforms intercept /images/)
+  // Also match /gen, /create, /generate as aliases for /generations since
+  // some platforms (e.g. v0 on Vercel) intercept paths containing "generations".
   { type: "images", test: /\/images\/(generations|variations|edits)$/i },
   { type: "images", test: /\/img\/(generations|variations|edits)$/i },
+  { type: "images", test: /\/img\/(gen|create|generate|generation)$/i },
   { type: "images", test: /\/images$/i },
   { type: "images", test: /\/img$/i },
   // ── Audio ──
