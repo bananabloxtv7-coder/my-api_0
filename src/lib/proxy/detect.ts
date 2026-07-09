@@ -36,9 +36,11 @@ const PATH_RULES: Array<{ type: EndpointType; test: RegExp }> = [
   { type: "models", test: /\/models$/i },
   // ── Embeddings ──
   { type: "embeddings", test: /\/embeddings$/i },
-  // ── Images ──
+  // ── Images ── (also match /img/ as alias since some platforms intercept /images/)
   { type: "images", test: /\/images\/(generations|variations|edits)$/i },
+  { type: "images", test: /\/img\/(generations|variations|edits)$/i },
   { type: "images", test: /\/images$/i },
+  { type: "images", test: /\/img$/i },
   // ── Audio ──
   { type: "audio", test: /\/audio\//i },
   // ── Responses (OpenAI Responses API) ──
