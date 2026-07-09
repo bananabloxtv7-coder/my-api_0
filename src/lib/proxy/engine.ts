@@ -282,7 +282,14 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
       // ── Success — stream the raw response back transparently ──
       if (status >= 200 && status < 300) {
         clearKeyInFlight(key.id);
-        markKeyBackground(userId, key.id, { action: "ok", reason: "success" });
+        // Update cache instantly (synchronous) + DB sync (awaited) so the
+        // "active" status persists even on Vercel serverless.
+        markKeyStateInCache(userId, key.id, {
+          status: "active",
+          cooldownUntil: null,
+          lastError: null,
+          lastUsedAt: new Date(),
+        });
         // ── Reset sibling keys in this provider ──
         // When one key succeeds, clear the cooldown of OTHER keys in the same
         // provider so they get retried on the next request (they may have been
@@ -318,6 +325,13 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
           retried: meta.retried - 1,
         });
         touchMasterKeyBackground(masterKey.id);
+
+        // ── AWAIT the success DB write before returning ──
+        // On Vercel serverless, fire-and-forget writes are dropped when the
+        // function exits after returning. We MUST await this so the key's
+        // "active" status persists to DB — otherwise the dashboard shows the
+        // key stuck in its previous bad state (rate_limited/error) forever.
+        await markKeySuccessSync(key.id);
 
         // ── Protocol translation: Anthropic response → OpenAI ──
         if (isAnthropicProvider) {
@@ -557,6 +571,39 @@ function translateAnthropicStream(
 //
 // These never throw into the request path. They run as detached promises so
 // the proxy loop can rotate keys instantly without waiting for any DB write.
+//
+// IMPORTANT (Vercel serverless): fire-and-forget writes may be DROPPED if the
+// function exits immediately after returning the response. For this reason,
+// the SUCCESS path uses markKeySuccessSync() which is AWAITED before the
+// response is returned — ensuring the key's "active" state persists to DB.
+// Error/cooldown writes stay fire-and-forget (losing them is harmless: the
+// cache still has the state, and the next request re-discovers the error).
+
+/**
+ * Synchronous (awaited) key-success DB write.
+ * MUST be awaited before returning the response on serverless — otherwise
+ * Vercel may kill the function and the "active" status never reaches the DB,
+ * leaving the key stuck in a bad state in the dashboard.
+ */
+async function markKeySuccessSync(keyId: string): Promise<void> {
+  const now = new Date();
+  try {
+    await db.providerApiKey.update({
+      where: { id: keyId },
+      data: {
+        status: "active",
+        cooldownUntil: null,
+        lastError: null,
+        lastUsedAt: now,
+        lastErrorAt: now,
+        totalSuccess: { increment: 1 },
+        totalRequests: { increment: 1 },
+      },
+    });
+  } catch {
+    // best-effort
+  }
+}
 
 function markKeyBackground(
   userId: string,
