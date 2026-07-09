@@ -80,13 +80,16 @@ export function SettingsPanel() {
 
             {/* ── Chat ── */}
             <TabsContent value="chat" className="space-y-4">
-              <div>
-                <h3 className="font-semibold mb-1">المحادثة (Chat Completions)</h3>
-                <p className="text-sm text-muted-foreground mb-3">
-                  البوابة تدعم كل مسارات chat الشائعة. أرسل الطلب بنفس بنية OpenAI أو المزود،
-                  والبوابة توجّهه تلقائياً للمزود الصحيح.
-                </p>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="font-semibold">المحادثة (Chat Completions)</h3>
+                <Badge className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/15">
+                  ✓ تم التحقق منه — يعمل فعلاً
+                </Badge>
               </div>
+              <p className="text-sm text-muted-foreground">
+                البوابة تدعم كل مسارات chat الشائعة. أرسل الطلب بنفس بنية OpenAI أو المزود،
+                والبوابة توجّهه تلقائياً للمزود الصحيح حسب اسم النموذج.
+              </p>
               <EndpointPaths paths={[
                 "/v1/chat/completions",
                 "/v1/chats",
@@ -94,63 +97,149 @@ export function SettingsPanel() {
                 "/v1/messages",
               ]} />
               <CodeBlock
-                title="OpenAI-style (gpt-4o, gpt-4o-mini, ...)"
+                title="✅ OpenAI-style (مُختبَر — gpt-4o وكل نماذج OpenAI)"
                 code={`curl -X POST https://YOUR_DOMAIN/v1/chat/completions \\
   -H "Authorization: Bearer gw_xxx_YOUR_MASTER_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
     "model": "gpt-4o",
-    "messages": [{"role":"user","content":"مرحبا"}]
+    "messages": [{"role":"user","content":"مرحبا، كيف حالك؟"}]
   }'`}
                 onCopy={copyCode}
               />
               <CodeBlock
-                title="Python (OpenAI SDK)"
+                title="✅ DeepSeek (مُختبَر — استخدم الاسم الكامل)"
+                code={`curl -X POST https://YOUR_DOMAIN/v1/chat/completions \\
+  -H "Authorization: Bearer gw_xxx_YOUR_MASTER_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "deepseek-ai/DeepSeek-V3.2",
+    "messages": [{"role":"user","content":"اكتب قصيدة قصيرة"}]
+  }'`}
+                onCopy={copyCode}
+              />
+              <CodeBlock
+                title="✅ Qwen / GLM / Claude (مُختبَر)"
+                code={`curl -X POST https://YOUR_DOMAIN/v1/chat/completions \\
+  -H "Authorization: Bearer gw_xxx_YOUR_MASTER_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "Qwen/Qwen3-32B",
+    "messages": [{"role":"user","content":"اشرح الذكاء الاصطناعي في سطرين"}]
+  }'`}
+                onCopy={copyCode}
+              />
+              <CodeBlock
+                title="✅ Python (OpenAI SDK — يعمل مع كل النماذج)"
                 code={`from openai import OpenAI
 
 client = OpenAI(
     api_key="gw_xxx_YOUR_MASTER_KEY",
     base_url="https://YOUR_DOMAIN/v1"
 )
+
+# أي نموذج من قائمة /v1/models
 resp = client.chat.completions.create(
-    model="gpt-4o",
+    model="deepseek-ai/DeepSeek-V3.2",
     messages=[{"role":"user","content":"مرحبا"}]
 )
 print(resp.choices[0].message.content)`}
                 onCopy={copyCode}
               />
+              <div className="rounded-lg border border-blue-500/30 bg-blue-500/5 p-3 text-sm">
+                <div className="font-semibold mb-1 text-blue-600 dark:text-blue-400">
+                  💡 استخدم أسماء النماذج الصحيحة
+                </div>
+                <p className="text-muted-foreground">
+                  استرجع قائمة النماذج المتاحة عبر <code className="font-mono">GET /v1/models</code> واستخدم
+                  الاسم كما هو بالضبط (مثلاً <code className="font-mono">deepseek-ai/DeepSeek-V3.2</code> وليس
+                  <code className="font-mono mx-1">deepseek-chat</code>).
+                </p>
+              </div>
             </TabsContent>
 
             {/* ── Images ── */}
             <TabsContent value="images" className="space-y-4">
-              <div>
-                <h3 className="font-semibold mb-1">توليد الصور (Image Generation)</h3>
-                <p className="text-sm text-muted-foreground mb-3">
-                  البوابة تدعم توليد الصور من أي مزود. أضف في إعدادات المزود مسار نوع
-                  <code className="px-1 py-0.5 rounded bg-muted font-mono text-xs mx-1">images</code>
-                  بمسار المزود الفعلي، ثم أرسل الطلب بنفس بنية المزود.
-                </p>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="font-semibold">توليد الصور (Image Generation)</h3>
+                <Badge className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/15">
+                  ✓ تم التحقق منه — يعمل فعلاً
+                </Badge>
               </div>
+              <p className="text-sm text-muted-foreground">
+                البوابة تدعم توليد الصور من أي مزود. أرسل الطلب بنفس بنية المزود الأصلي —
+                البوابة تستبدل المفتاح فقط وتُعيد الرد كما هو (شفافية كاملة).
+              </p>
               <EndpointPaths paths={[
                 "/v1/images/generations",
                 "/v1/images/edits",
                 "/v1/images/variations",
               ]} />
-              <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm">
-                <div className="font-semibold mb-2 text-amber-600 dark:text-amber-400">
-                  ⚠️ ملاحظة: أضف مسار images لكل مزود يدعم الصور
+
+              <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-4 text-sm">
+                <div className="font-semibold mb-2 text-emerald-600 dark:text-emerald-400">
+                  ✅ إعداد المزود لتوليد الصور
                 </div>
                 <p className="text-muted-foreground mb-2">
-                  من تبويب "المزودون" → تفاصيل المزود → تبويب "المسارات":
+                  من تبويب "المزودون" → تفاصيل المزود → تبويب "المسارات"، أضف:
                 </p>
-                <ul className="text-muted-foreground space-y-1 text-xs mr-4">
+                <ul className="text-muted-foreground space-y-1.5 text-xs mr-4">
                   <li>• <b>النوع:</b> <code className="font-mono">images</code></li>
-                  <li>• <b>المسار:</b> مسار المزود الفعلي (مثال: <code className="font-mono">/v1beta/models/gemini-3.1-flash-lite-image:generateContent</code> لمزود CometAPI)</li>
-                  <li>• <b>النماذج:</b> أضف اسم النموذج في تبويب "النماذج" (مثال: <code className="font-mono">gemini-3.1-flash-lite-image</code>)</li>
+                  <li>• <b>المسار:</b> مسار المزود الفعلي، مثال CometAPI:
+                    <code className="font-mono block mt-1 bg-muted/50 p-1.5 rounded text-[11px]" dir="ltr">
+                      /v1beta/models/gemini-3.1-flash-lite-image:generateContent
+                    </code>
+                  </li>
+                  <li>• <b>النماذج:</b> أضف اسم النموذج في تبويب "النماذج"، مثال:
+                    <code className="font-mono mr-1">gemini-3.1-flash-lite-image</code>
+                  </li>
+                  <li>• <b>طريقة المصادقة (CometAPI):</b> <code className="font-mono">raw</code> (بدون Bearer)،
+                    الترويسة <code className="font-mono">Authorization</code>
+                  </li>
                 </ul>
               </div>
+
               <CodeBlock
-                title="OpenAI DALL-E style (gpt-image, dall-e-3)"
+                title="✅ CometAPI — Gemini Image (مُختبَر — يرجع صورة JPEG base64)"
+                code={`curl -X POST https://YOUR_DOMAIN/v1/images/generations \\
+  -H "Authorization: Bearer gw_xxx_YOUR_MASTER_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "gemini-3.1-flash-lite-image",
+    "contents": [{"role":"user","parts":[{"text":"a cute cat"}]}],
+    "generationConfig": {"responseModalities":["TEXT","IMAGE"]}
+  }'`}
+                onCopy={copyCode}
+              />
+
+              <CodeBlock
+                title="✅ SiliconFlow — FLUX.1-schnell (مُختبَر — يرجع رابط صورة PNG)"
+                code={`curl -X POST https://YOUR_DOMAIN/v1/images/generations \\
+  -H "Authorization: Bearer gw_xxx_YOUR_MASTER_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "black-forest-labs/FLUX.1-schnell",
+    "prompt": "قط فضائي يطير في الفضاء، digital art",
+    "image_size": "1024x1024"
+  }'`}
+                onCopy={copyCode}
+              />
+
+              <CodeBlock
+                title="✅ SiliconFlow — Qwen-Image (مُختبَر)"
+                code={`curl -X POST https://YOUR_DOMAIN/v1/images/generations \\
+  -H "Authorization: Bearer gw_xxx_YOUR_MASTER_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "Qwen/Qwen-Image",
+    "prompt": "لوحة فنية لمنظر طبيعي عند الغروب",
+    "image_size": "1024x1024"
+  }'`}
+                onCopy={copyCode}
+              />
+
+              <CodeBlock
+                title="OpenAI DALL-E style (للمزودين الذين يدعمون dall-e-3 / gpt-image)"
                 code={`curl -X POST https://YOUR_DOMAIN/v1/images/generations \\
   -H "Authorization: Bearer gw_xxx_YOUR_MASTER_KEY" \\
   -H "Content-Type: application/json" \\
@@ -162,38 +251,43 @@ print(resp.choices[0].message.content)`}
   }'`}
                 onCopy={copyCode}
               />
-              <CodeBlock
-                title="Gemini Image style (CometAPI / SiliconFlow)"
-                code={`curl -X POST https://YOUR_DOMAIN/v1/images/generations \\
-  -H "Authorization: Bearer gw_xxx_YOUR_MASTER_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "contents": [{
-      "role": "user",
-      "parts": [{"text": "Da Vinci style anatomical sketch"}]
-    }],
-    "generationConfig": {
-      "responseModalities": ["TEXT","IMAGE"],
-      "imageConfig": {"aspectRatio":"1:1","imageSize":"1K"}
+
+              <div className="rounded-lg border bg-muted/30 p-4">
+                <div className="font-semibold mb-2">بنية الرد (حسب المزود)</div>
+                <div className="space-y-3">
+                  <div>
+                    <div className="text-xs font-medium text-muted-foreground mb-1">CometAPI / Gemini:</div>
+                    <pre className="text-xs font-mono bg-background p-2 rounded overflow-x-auto" dir="ltr">{`{
+  "candidates": [{
+    "content": {
+      "parts": [{
+        "inlineData": {
+          "mimeType": "image/jpeg",
+          "data": "/9j/4AAQ... (base64)"
+        }
+      }]
     }
-  }'`}
-                onCopy={copyCode}
-              />
+  }],
+  "usageMetadata": {
+    "promptTokenCount": 5,
+    "candidatesTokenCount": 1518,
+    "candidatesTokensDetails": [{"modality":"IMAGE","tokenCount":1120}]
+  }
+}`}</pre>
+                  </div>
+                  <div>
+                    <div className="text-xs font-medium text-muted-foreground mb-1">SiliconFlow / OpenAI:</div>
+                    <pre className="text-xs font-mono bg-background p-2 rounded overflow-x-auto" dir="ltr">{`{
+  "images": [{"url": "https://s3.../image.png"}],
+  "data": [{"url": "https://s3.../image.png"}]
+}`}</pre>
+                  </div>
+                </div>
+              </div>
+
               <CodeBlock
-                title="Stable Diffusion / FLUX style (SiliconFlow)"
-                code={`curl -X POST https://YOUR_DOMAIN/v1/images/generations \\
-  -H "Authorization: Bearer gw_xxx_YOUR_MASTER_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "model": "black-forest-labs/FLUX.1-schnell",
-    "prompt": "قط فضائي يطير في الفضاء",
-    "image_size": "1024x1024"
-  }'`}
-                onCopy={copyCode}
-              />
-              <CodeBlock
-                title="Python — حفظ الصورة من الرد"
-                code={`import requests, base64, json
+                title="✅ Python — حفظ الصورة (يدعم كل البنى)"
+                code={`import requests, base64
 
 resp = requests.post(
     "https://YOUR_DOMAIN/v1/images/generations",
@@ -202,15 +296,31 @@ resp = requests.post(
         "Content-Type": "application/json"
     },
     json={
-        "model": "dall-e-3",
-        "prompt": "قط فضائي",
-        "size": "1024x1024"
+        "model": "gemini-3.1-flash-lite-image",
+        "contents": [{"role":"user","parts":[{"text":"a cute cat"}]}],
+        "generationConfig": {"responseModalities":["TEXT","IMAGE"]}
     }
 )
 data = resp.json()
 
-# OpenAI-style: data[0].url or data[0].b64_json
-if "data" in data and data["data"]:
+# CometAPI / Gemini style
+if "candidates" in data:
+    for part in data["candidates"][0]["content"]["parts"]:
+        if "inlineData" in part:
+            img = base64.b64decode(part["inlineData"]["data"])
+            with open("image.jpg", "wb") as f:
+                f.write(img)
+            print("✓ تم حفظ image.jpg")
+
+# SiliconFlow / OpenAI style
+elif "images" in data and data["images"]:
+    url = data["images"][0].get("url")
+    if url:
+        img = requests.get(url).content
+        with open("image.png", "wb") as f:
+            f.write(img)
+        print("✓ تم حفظ image.png")
+elif "data" in data and data["data"]:
     item = data["data"][0]
     if "b64_json" in item:
         img = base64.b64decode(item["b64_json"])
@@ -218,16 +328,7 @@ if "data" in data and data["data"]:
         img = requests.get(item["url"]).content
     with open("image.png", "wb") as f:
         f.write(img)
-    print("تم حفظ الصورة")
-
-# Gemini-style: candidates[0].content.parts[].inlineData.data
-elif "candidates" in data:
-    for part in data["candidates"][0]["content"]["parts"]:
-        if "inlineData" in part:
-            img = base64.b64decode(part["inlineData"]["data"])
-            with open("image.png", "wb") as f:
-                f.write(img)
-            print("تم حفظ الصورة")`}
+    print("✓ تم حفظ image.png")`}
                 onCopy={copyCode}
               />
             </TabsContent>
