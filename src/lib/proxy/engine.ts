@@ -154,15 +154,27 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
   }
 
   // ── 5. Iterate providers & keys (rotation + failover) ─────────────
-  // We do up to 2 passes: if the first pass only got 5xx (transient provider
-  // errors), retry once because the provider may have recovered. Keys are NOT
-  // penalized for 5xx (they stay 'active'), so the second pass retries them.
+  // We do up to 3 passes: if all attempts got 5xx (transient provider
+  // errors), retry because the provider may have recovered. Keys are NOT
+  // penalized for 5xx (they stay 'active'), so each pass retries them all.
   let onlyHad5xxErrors = true;
-  for (let pass = 0; pass < 2; pass++) {
+  for (let pass = 0; pass < 3; pass++) {
     const now = Date.now();
   for (const provider of candidates) {
     const endpoint = provider.endpoints.find((e) => e.type === detected.type);
     if (!endpoint) continue;
+
+    // On pass > 0, force-recover ALL non-disabled keys to 'active' so we
+    // can retry them. 5xx didn't penalize them, but some may have stale
+    // 'error' state from a previous request. Clear it.
+    if (pass > 0) {
+      for (const k of provider.apiKeys) {
+        if (k.isActive && k.status !== "disabled" && k.status !== "exhausted") {
+          k.status = "active";
+          k.cooldownUntil = null;
+        }
+      }
+    }
 
     // Order keys: usable first (not disabled / not in cooldown / not
     // in-flight), least errors, least recently used. Disabled and in-flight
@@ -449,10 +461,10 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
   }
 
   // ── 6. All keys/providers exhausted ───────────────────────────────
-  // If we only had 5xx errors AND this was the first pass, retry once.
-  // 5xx is transient — the provider may have recovered.
-  if (onlyHad5xxErrors && pass === 0 && meta.retried > 0) {
-    continue; // do a second pass
+  // If we only had 5xx errors AND this was pass 0 or 1, retry.
+  // 5xx is transient — the provider may have recovered between passes.
+  if (onlyHad5xxErrors && pass < 2 && meta.retried > 0) {
+    continue; // do another pass
   }
   break; // no more passes
   } // end for pass
