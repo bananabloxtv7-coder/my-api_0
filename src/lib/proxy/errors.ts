@@ -10,7 +10,8 @@
 export type KeyHealthAction =
   | "ok" // success, key is healthy
   | "disable" // key is bad (auth) — disable permanently
-  | "cooldown" // transient (rate limit / quota) — temporary cooldown
+  | "cooldown" // transient (rate limit) — short cooldown
+  | "quota_exhausted" // no balance/credits — medium cooldown, skip to next provider
   | "error" // generic error — minor penalty, keep usable
   | "ignore"; // not a key issue (e.g. 4xx from client body) — don't rotate
 
@@ -20,9 +21,9 @@ export interface ClassifyResult {
   reason: string;
 }
 
-const RATE_LIMIT_COOLDOWN = 60_000; // 1 min
-const QUOTA_COOLDOWN = 6 * 60 * 60 * 1000; // 6 hours (billing/daily)
-const ERROR_COOLDOWN = 5_000; // 5s
+const RATE_LIMIT_COOLDOWN = 30_000; // 30s
+const QUOTA_COOLDOWN = 5 * 60 * 1000; // 5 min (was 6h — too long, user can't retry after topping up)
+const ERROR_COOLDOWN = 3_000; // 3s
 
 /** Match known error signatures in the upstream response body. */
 function matchBodyError(text: string): string | null {
@@ -70,9 +71,9 @@ export function classifyResponse(
     return { action: "disable", cooldownMs: 0, reason: matchBodyError(bodyText) || "unauthorized" };
   }
 
-  // Payment required — quota/billing
+  // Payment required — quota/billing (no balance)
   if (status === 402) {
-    return { action: "cooldown", cooldownMs: QUOTA_COOLDOWN, reason: "billing_required" };
+    return { action: "quota_exhausted", cooldownMs: QUOTA_COOLDOWN, reason: "billing_required" };
   }
 
   // Rate limited
@@ -83,7 +84,7 @@ export function classifyResponse(
   // Body-signature fallback (some providers return 200/500 with quota text)
   const bodyReason = matchBodyError(bodyText);
   if (bodyReason === "quota_exceeded" || bodyReason === "billing_required" || bodyReason === "daily_limit") {
-    return { action: "cooldown", cooldownMs: QUOTA_COOLDOWN, reason: bodyReason };
+    return { action: "quota_exhausted", cooldownMs: QUOTA_COOLDOWN, reason: bodyReason };
   }
   if (bodyReason === "rate_limited") {
     return { action: "cooldown", cooldownMs: RATE_LIMIT_COOLDOWN, reason: bodyReason };

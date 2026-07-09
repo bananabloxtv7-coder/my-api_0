@@ -6,7 +6,7 @@ import {
   openaiToAnthropicRequest,
   anthropicToOpenAIResponse,
 } from "./translate";
-import { getCachedProviders, markKeyStateInCache, markKeyInFlight, clearKeyInFlight, isKeyInFlight, type CachedProvider, type CachedKey } from "./cache";
+import { getCachedProviders, markKeyStateInCache, resetProviderKeysInCache, markKeyInFlight, clearKeyInFlight, isKeyInFlight, type CachedProvider, type CachedKey } from "./cache";
 
 export interface ProxyResult {
   response: Response;
@@ -283,6 +283,12 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
       if (status >= 200 && status < 300) {
         clearKeyInFlight(key.id);
         markKeyBackground(userId, key.id, { action: "ok", reason: "success" });
+        // ── Reset sibling keys in this provider ──
+        // When one key succeeds, clear the cooldown of OTHER keys in the same
+        // provider so they get retried on the next request (they may have been
+        // put in cooldown by a transient error). This prevents a provider from
+        // being "locked out" just because one key had a temporary hiccup.
+        resetProviderKeysInCache(userId, provider.id, key.id);
         meta.providerId = provider.id;
         meta.providerKeyId = key.id;
         meta.providerName = provider.name;
@@ -358,6 +364,16 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
         reason: verdict.reason,
         statusCode: status,
       });
+
+      // ── Quota exhausted: skip to next PROVIDER (not just next key) ──
+      // If a key has no balance (402/quota), other keys in the SAME provider
+      // are likely in the same account and will fail the same way. So we break
+      // out of this provider's key loop and move to the next provider, which
+      // may have keys with balance. This is the fix for "one dead key disables
+      // all keys" — it only disables itself, and we jump to a different provider.
+      if (verdict.action === "quota_exhausted") {
+        break; // break out of the key loop → move to next provider
+      }
 
       // If it's a client error that isn't the key's fault, return it to the
       // client immediately (transparent behaviour — don't silently retry).
@@ -555,14 +571,12 @@ function markKeyBackground(
   // wasting an HTTP call. Without this, a 5s cache window would re-try
   // the dead key on every concurrent request.
   const cooldownMs =
-    opts.action === "cooldown"
-      ? opts.reason.includes("quota") ||
-        opts.reason.includes("billing") ||
-        opts.reason.includes("daily")
-        ? 6 * 60 * 60 * 1000
-        : 60 * 1000
+    opts.action === "quota_exhausted"
+      ? 5 * 60 * 1000 // 5 min — no balance, retry after user tops up
+      : opts.action === "cooldown"
+      ? 30_000 // 30s — rate limit
       : opts.action === "error"
-      ? 5_000
+      ? 3_000 // 3s — transient
       : 0;
 
   const cacheUpdates: Partial<CachedKey> = {
@@ -577,6 +591,11 @@ function markKeyBackground(
     case "disable":
       cacheUpdates.status = "disabled";
       cacheUpdates.isActive = false;
+      break;
+    case "quota_exhausted":
+      cacheUpdates.status = "rate_limited"; // status text
+      cacheUpdates.cooldownUntil = new Date(now.getTime() + cooldownMs);
+      cacheUpdates.lastError = `quota_exhausted: ${opts.reason}`;
       break;
     case "cooldown":
       cacheUpdates.status = "rate_limited";
@@ -610,6 +629,13 @@ function markKeyBackground(
         data.totalErrors = { increment: 1 };
         data.totalRequests = { increment: 1 };
         data.lastError = opts.reason;
+        break;
+      case "quota_exhausted":
+        data.status = "rate_limited";
+        data.cooldownUntil = new Date(now.getTime() + cooldownMs);
+        data.totalErrors = { increment: 1 };
+        data.totalRequests = { increment: 1 };
+        data.lastError = `quota_exhausted: ${opts.reason}`;
         break;
       case "cooldown":
         data.status = "rate_limited";

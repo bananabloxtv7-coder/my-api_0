@@ -127,6 +127,39 @@ export function markKeyStateInCache(
   }
 }
 
+/**
+ * Reset sibling keys in the same provider back to "active" when one key
+ * succeeds. This clears any transient cooldown (rate_limit, error) on the
+ * OTHER keys so they get retried on the next request.
+ *
+ * Why: if key A had a transient 5xx and got a 5s cooldown, but key B
+ * succeeds, we don't want key A to stay in cooldown — it might work fine
+ * next time. Only the succeeded key's ID is excluded from the reset.
+ *
+ * Note: disabled keys (auth failure) are NOT reset — they stay disabled.
+ */
+export function resetProviderKeysInCache(
+  userId: string,
+  providerId: string,
+  exceptKeyId: string
+): void {
+  const entry = cache.get(userId);
+  if (!entry) return;
+  for (const provider of entry.data) {
+    if (provider.id !== providerId) continue;
+    for (const key of provider.apiKeys) {
+      if (key.id === exceptKeyId) continue;
+      // Only reset transient states — leave disabled/exhausted keys alone
+      if (key.status === "rate_limited" || key.status === "error") {
+        key.status = "active";
+        key.cooldownUntil = null;
+        key.lastError = null;
+      }
+    }
+    return;
+  }
+}
+
 /** Fetch the cached provider graph, refreshing from DB if stale or invalidated. */
 export async function getCachedProviders(userId: string): Promise<CachedProvider[]> {
   const version = versions.get(userId) ?? 0;

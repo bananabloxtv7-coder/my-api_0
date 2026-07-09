@@ -738,16 +738,53 @@ function KeysManager({ providerId, keys }: { providerId: string; keys: KeyItem[]
     onError: (e) => toast.error((e as Error).message),
   });
 
+  const resetAllMut = useMutation({
+    mutationFn: async () => {
+      const disabled = keys.filter((k) => k.status !== "active");
+      await Promise.all(
+        disabled.map((k) =>
+          api.patch(`/api/providers/${providerId}/keys/${k.id}`, { reset: true })
+        )
+      );
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["provider", providerId] });
+      qc.invalidateQueries({ queryKey: ["providers"] });
+      toast.success("تمت إعادة تفعيل جميع المفاتيح");
+    },
+    onError: (e) => toast.error((e as Error).message),
+  });
+
+  const disabledCount = keys.filter((k) => k.status !== "active").length;
+
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-2">
         <div className="text-sm text-muted-foreground">
           {keys.length} مفتاح
+          {disabledCount > 0 && (
+            <span className="mr-2 text-amber-600 dark:text-amber-400">
+              ({disabledCount} بحاجة لإعادة تفعيل)
+            </span>
+          )}
         </div>
-        <Button size="sm" onClick={() => setAdding((v) => !v)}>
-          <Plus className="w-4 h-4 ml-1" />
-          إضافة مفتاح
-        </Button>
+        <div className="flex gap-2">
+          {disabledCount > 0 && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => resetAllMut.mutate()}
+              disabled={resetAllMut.isPending}
+            >
+              <RefreshCw className="w-4 h-4 ml-1" />
+              إعادة تفعيل الكل
+            </Button>
+          )}
+          <Button size="sm" onClick={() => setAdding((v) => !v)}>
+            <Plus className="w-4 h-4 ml-1" />
+            إضافة مفتاح
+          </Button>
+        </div>
       </div>
 
       {adding && (
