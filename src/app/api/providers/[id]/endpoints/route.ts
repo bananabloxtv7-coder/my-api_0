@@ -53,14 +53,32 @@ export async function POST(
     return Response.json({ error: "type and path are required" }, { status: 400 });
   }
 
-  const endpoint = await db.providerEndpoint.create({
-    data: {
-      providerId: id,
-      type: body.type.trim(),
-      path: body.path.trim(),
-      method: body.method?.trim() || "POST",
-    },
-  });
+  // Upsert: if an endpoint of this type already exists for this provider,
+  // update its path/method instead of crashing on the unique constraint.
+  let endpoint;
+  try {
+    endpoint = await db.providerEndpoint.upsert({
+      where: {
+        providerId_type: { providerId: id, type: body.type.trim() },
+      },
+      update: {
+        path: body.path.trim(),
+        method: body.method?.trim() || "POST",
+      },
+      create: {
+        providerId: id,
+        type: body.type.trim(),
+        path: body.path.trim(),
+        method: body.method?.trim() || "POST",
+      },
+    });
+  } catch (err) {
+    console.error("[endpoints] create/upsert error:", err);
+    return Response.json(
+      { error: "Failed to save endpoint. Please try again." },
+      { status: 500 }
+    );
+  }
 
   await audit({
     userId: user.id,
