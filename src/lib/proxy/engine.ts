@@ -154,7 +154,12 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
   }
 
   // ── 5. Iterate providers & keys (rotation + failover) ─────────────
-  const now = Date.now();
+  // We do up to 2 passes: if the first pass only got 5xx (transient provider
+  // errors), retry once because the provider may have recovered. Keys are NOT
+  // penalized for 5xx (they stay 'active'), so the second pass retries them.
+  let onlyHad5xxErrors = true;
+  for (let pass = 0; pass < 2; pass++) {
+    const now = Date.now();
   for (const provider of candidates) {
     const endpoint = provider.endpoints.find((e) => e.type === detected.type);
     if (!endpoint) continue;
@@ -386,7 +391,12 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
           reason: verdict.reason,
           statusCode: status,
         });
+        // Track that we had 5xx (for the retry-pass logic)
+        // (onlyHad5xxErrors stays true)
         continue; // try next key immediately
+      } else {
+        // Any non-5xx error means we shouldn't do a full retry pass
+        onlyHad5xxErrors = false;
       }
 
       // For all other error actions, fire-and-forget the key health update
@@ -439,6 +449,13 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
   }
 
   // ── 6. All keys/providers exhausted ───────────────────────────────
+  // If we only had 5xx errors AND this was the first pass, retry once.
+  // 5xx is transient — the provider may have recovered.
+  if (onlyHad5xxErrors && pass === 0 && meta.retried > 0) {
+    continue; // do a second pass
+  }
+  break; // no more passes
+  } // end for pass
   logRequestBackground({
     userId,
     masterApiKeyId: masterKey.id,
