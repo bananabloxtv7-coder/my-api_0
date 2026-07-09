@@ -42,6 +42,26 @@ export async function GET(
     },
   });
 
+  // Auto-recover: if a key's cooldown has expired, mark it active in DB so the
+  // dashboard shows the correct state. This runs in the background.
+  const now = new Date();
+  for (const k of keys) {
+    if (
+      k.isActive &&
+      (k.status === "rate_limited" || k.status === "error") &&
+      k.cooldownUntil &&
+      k.cooldownUntil < now
+    ) {
+      // Update in DB (fire-and-forget) and in the response object
+      void db.providerApiKey.update({
+        where: { id: k.id },
+        data: { status: "active", cooldownUntil: null },
+      }).catch(() => {});
+      k.status = "active";
+      k.cooldownUntil = null;
+    }
+  }
+
   return Response.json({ keys });
 }
 

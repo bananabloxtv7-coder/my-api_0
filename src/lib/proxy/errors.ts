@@ -93,6 +93,13 @@ export function classifyResponse(
     return { action: "disable", cooldownMs: 0, reason: bodyReason };
   }
 
-  // 5xx and anything else — transient provider error
+  // 5xx — transient provider error (502/503/504 = provider overloaded, NOT key issue)
+  // Use a very short cooldown so the key retries quickly. Don't disable —
+  // the key itself is fine, the provider just had a hiccup.
+  if (status >= 500) {
+    return { action: "error", cooldownMs: ERROR_COOLDOWN, reason: `http_${status}` };
+  }
+
+  // Anything else — transient
   return { action: "error", cooldownMs: ERROR_COOLDOWN, reason: `http_${status}` };
 }

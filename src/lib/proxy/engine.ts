@@ -459,8 +459,14 @@ function isKeyUsable(k: CachedKey, now: number): boolean {
   if (!k.isActive) return false;
   if (k.status === "active") return true;
   if (k.status === "disabled" || k.status === "exhausted") return false;
-  // rate_limited / quota_exceeded / error → usable if cooldown expired
-  if (k.cooldownUntil && k.cooldownUntil.getTime() < now) return true;
+  // rate_limited / error → usable if cooldown expired
+  if (k.cooldownUntil && k.cooldownUntil.getTime() < now) {
+    // Auto-recover: clear the stale cooldown in-memory so the dashboard
+    // and subsequent requests see this key as healthy.
+    k.status = "active";
+    k.cooldownUntil = null;
+    return true;
+  }
   return false;
 }
 
