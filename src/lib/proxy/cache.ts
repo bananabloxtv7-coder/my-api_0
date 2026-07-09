@@ -45,7 +45,8 @@ interface CacheEntry {
   version: number;
 }
 
-const TTL_MS = 5_000; // 5s — picks up admin edits fast, serves bursts instantly.
+const TTL_MS = 1_000; // 1s — short TTL so admin edits (key reset/disable) are
+                      // picked up fast even across Vercel serverless instances.
 const cache = new Map<string, CacheEntry>();
 const versions = new Map<string, number>();
 
