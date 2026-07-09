@@ -37,7 +37,7 @@ const NAV: Array<{ id: Tab; label: string; icon: React.ReactNode }> = [
   { id: "providers", label: "المزودون", icon: <Server className="w-4 h-4" /> },
   { id: "master-keys", label: "المفاتيح الرئيسية", icon: <KeyRound className="w-4 h-4" /> },
   { id: "logs", label: "السجلات", icon: <ScrollText className="w-4 h-4" /> },
-  { id: "settings", label: "الإعدادات", icon: <Settings className="w-4 h-4" /> },
+  { id: "settings", label: "الإعدادات والوثائق", icon: <Settings className="w-4 h-4" /> },
 ];
 
 export function DashboardShell() {
