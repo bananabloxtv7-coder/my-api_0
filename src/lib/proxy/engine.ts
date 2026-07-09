@@ -371,8 +371,25 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
       const errText = await readCapped(upstream, MAX_ERROR_BODY);
       const verdict = classifyResponse(status, errText);
 
-      // Clear in-flight + fire-and-forget: update key health, keep rotating NOW
+      // Clear in-flight marker (request finished with this key)
       clearKeyInFlight(key.id);
+
+      // ── "retry" (5xx): DON'T penalize the key at all ──
+      // 503/502/504 means the provider was briefly overloaded — the KEY is
+      // fine. We just rotate to the next key WITHOUT changing this key's
+      // status. It stays 'active' and is immediately reusable. This prevents
+      // "all keys exhausted" when the provider has transient 5xx hiccups.
+      if (verdict.action === "retry") {
+        // Only log the error count (for stats), don't change status/cooldown
+        markKeyBackground(userId, key.id, {
+          action: "retry",
+          reason: verdict.reason,
+          statusCode: status,
+        });
+        continue; // try next key immediately
+      }
+
+      // For all other error actions, fire-and-forget the key health update
       markKeyBackground(userId, key.id, {
         action: verdict.action,
         reason: verdict.reason,
@@ -380,11 +397,6 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
       });
 
       // ── Quota exhausted: skip to next PROVIDER (not just next key) ──
-      // If a key has no balance (402/quota), other keys in the SAME provider
-      // are likely in the same account and will fail the same way. So we break
-      // out of this provider's key loop and move to the next provider, which
-      // may have keys with balance. This is the fix for "one dead key disables
-      // all keys" — it only disables itself, and we jump to a different provider.
       if (verdict.action === "quota_exhausted") {
         break; // break out of the key loop → move to next provider
       }
@@ -640,6 +652,10 @@ function markKeyBackground(
   // same burst sees the key as disabled/cooldown and skips it without
   // wasting an HTTP call. Without this, a 5s cache window would re-try
   // the dead key on every concurrent request.
+  //
+  // SPECIAL: "retry" (5xx) does NOT change the key's status or cooldown —
+  // the key stays 'active' and is immediately reusable. We only increment
+  // the error/request counters for stats.
   const cooldownMs =
     opts.action === "quota_exhausted"
       ? 5 * 60 * 1000 // 5 min — no balance, retry after user tops up
@@ -651,15 +667,20 @@ function markKeyBackground(
 
   const cacheUpdates: Partial<CachedKey> = {
     lastUsedAt: now,
-    lastError: opts.action === "ok" ? null : opts.reason,
   };
   switch (opts.action) {
     case "ok":
       cacheUpdates.status = "active";
       cacheUpdates.cooldownUntil = null;
+      cacheUpdates.lastError = null;
+      break;
+    case "retry":
+      // DON'T change status, cooldown, or lastError — key is fine!
+      // Just update lastUsedAt (already set above).
       break;
     case "disable":
       cacheUpdates.status = "disabled";
+      cacheUpdates.lastError = opts.reason;
       cacheUpdates.isActive = false;
       break;
     case "quota_exhausted":
@@ -670,10 +691,12 @@ function markKeyBackground(
     case "cooldown":
       cacheUpdates.status = "rate_limited";
       cacheUpdates.cooldownUntil = new Date(now.getTime() + cooldownMs);
+      cacheUpdates.lastError = opts.reason;
       break;
     case "error":
       cacheUpdates.status = "error";
       cacheUpdates.cooldownUntil = new Date(now.getTime() + cooldownMs);
+      cacheUpdates.lastError = opts.reason;
       break;
   }
   markKeyStateInCache(userId, keyId, cacheUpdates);
@@ -692,6 +715,12 @@ function markKeyBackground(
         data.totalSuccess = { increment: 1 };
         data.totalRequests = { increment: 1 };
         data.lastError = null;
+        break;
+      case "retry":
+        // 5xx: DON'T change status, cooldown, or lastError.
+        // Just count the request + error for stats. Key stays 'active'.
+        data.totalErrors = { increment: 1 };
+        data.totalRequests = { increment: 1 };
         break;
       case "disable":
         data.status = "disabled";

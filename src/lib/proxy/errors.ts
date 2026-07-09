@@ -13,6 +13,7 @@ export type KeyHealthAction =
   | "cooldown" // transient (rate limit) — short cooldown
   | "quota_exhausted" // no balance/credits — medium cooldown, skip to next provider
   | "error" // generic error — minor penalty, keep usable
+  | "retry" // provider 5xx — DON'T penalize the key, just rotate to next key
   | "ignore"; // not a key issue (e.g. 4xx from client body) — don't rotate
 
 export interface ClassifyResult {
@@ -94,11 +95,11 @@ export function classifyResponse(
   }
 
   // 5xx — transient provider error (502/503/504 = provider overloaded, NOT key issue)
-  // DON'T penalize the key — it's fine, the provider just had a hiccup.
-  // Use a minimal cooldown (1s) so the key is immediately reusable on the
-  // next request. The key is NOT disabled and NOT marked as 'error' long.
+  // DON'T penalize the key at all — it's fine, the provider just had a hiccup.
+  // Return "retry" so the engine rotates to the next key WITHOUT changing
+  // this key's status. The key stays 'active' and is immediately reusable.
   if (status >= 500) {
-    return { action: "error", cooldownMs: 1_000, reason: `http_${status}` };
+    return { action: "retry", cooldownMs: 0, reason: `http_${status}` };
   }
 
   // Anything else — transient
