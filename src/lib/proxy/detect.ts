@@ -58,8 +58,9 @@ const PATH_RULES: Array<{ type: EndpointType; test: RegExp }> = [
 
 /** Detect the logical endpoint type from the requested path. */
 export function detectEndpointType(path: string): DetectedEndpoint {
-  // Strip all mount prefixes: /proxy/v1, /api/v1, /v1
+  // Strip all mount prefixes: /gw/v1, /proxy/v1, /api/v1, /v1
   const normalized = path
+    .replace(/^\/gw\/v1/i, "")
     .replace(/^\/proxy\/v1/i, "")
     .replace(/^\/api\/v1/i, "")
     .replace(/^\/v1/i, "")
