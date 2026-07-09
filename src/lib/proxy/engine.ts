@@ -331,7 +331,7 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
         // function exits after returning. We MUST await this so the key's
         // "active" status persists to DB — otherwise the dashboard shows the
         // key stuck in its previous bad state (rate_limited/error) forever.
-        await markKeySuccessSync(key.id);
+        await markKeySuccessSync(key.id, provider.id);
 
         // ── Protocol translation: Anthropic response → OpenAI ──
         if (isAnthropicProvider) {
@@ -590,10 +590,14 @@ function translateAnthropicStream(
  * MUST be awaited before returning the response on serverless — otherwise
  * Vercel may kill the function and the "active" status never reaches the DB,
  * leaving the key stuck in a bad state in the dashboard.
+ *
+ * ALSO: recovers sibling keys in the same provider whose cooldown has
+ * expired — sets them back to 'active' so the dashboard reflects reality.
  */
-async function markKeySuccessSync(keyId: string): Promise<void> {
+async function markKeySuccessSync(keyId: string, providerId: string): Promise<void> {
   const now = new Date();
   try {
+    // 1. Mark the succeeded key as active
     await db.providerApiKey.update({
       where: { id: keyId },
       data: {
@@ -605,6 +609,18 @@ async function markKeySuccessSync(keyId: string): Promise<void> {
         totalSuccess: { increment: 1 },
         totalRequests: { increment: 1 },
       },
+    });
+    // 2. Recover sibling keys in the same provider whose cooldown expired
+    //    (bulk update — fire-safe, no await needed for this part but we do
+    //    it sync to ensure it lands on serverless)
+    await db.providerApiKey.updateMany({
+      where: {
+        providerId,
+        isActive: true,
+        status: { in: ["rate_limited", "error"] },
+        cooldownUntil: { lt: now },
+      },
+      data: { status: "active", cooldownUntil: null },
     });
   } catch {
     // best-effort
