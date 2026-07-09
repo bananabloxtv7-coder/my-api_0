@@ -610,17 +610,18 @@ async function markKeySuccessSync(keyId: string, providerId: string): Promise<vo
         totalRequests: { increment: 1 },
       },
     });
-    // 2. Recover sibling keys in the same provider whose cooldown expired
-    //    (bulk update — fire-safe, no await needed for this part but we do
-    //    it sync to ensure it lands on serverless)
+    // 2. Recover ALL sibling keys in the same provider that are in a transient
+    //    bad state (error/rate_limited) — regardless of whether their cooldown
+    //    expired. A successful request proves the provider is working, so any
+    //    503/timeout on other keys was transient and should be cleared.
+    //    Only truly disabled keys (401 unauthorized) stay disabled.
     await db.providerApiKey.updateMany({
       where: {
         providerId,
         isActive: true,
         status: { in: ["rate_limited", "error"] },
-        cooldownUntil: { lt: now },
       },
-      data: { status: "active", cooldownUntil: null },
+      data: { status: "active", cooldownUntil: null, lastError: null },
     });
   } catch {
     // best-effort

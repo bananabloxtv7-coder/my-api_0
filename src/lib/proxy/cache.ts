@@ -149,8 +149,12 @@ export function resetProviderKeysInCache(
     if (provider.id !== providerId) continue;
     for (const key of provider.apiKeys) {
       if (key.id === exceptKeyId) continue;
-      // Only reset transient states — leave disabled/exhausted keys alone
-      if (key.status === "rate_limited" || key.status === "error") {
+      // Reset ALL non-disabled keys to active — including those with an
+      // active cooldown (503, rate_limit, timeout). A successful sibling
+      // request means the provider is working, so transient errors on
+      // other keys should be cleared immediately. Only truly disabled
+      // keys (401 unauthorized) stay disabled.
+      if (key.status !== "disabled" && key.status !== "exhausted") {
         key.status = "active";
         key.cooldownUntil = null;
         key.lastError = null;
