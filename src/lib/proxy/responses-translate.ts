@@ -71,20 +71,20 @@ export function chatToResponsesRequest(body: unknown): unknown {
     input,
   };
 
-  // Map optional fields
-  if (typeof src.temperature === "number") out.temperature = src.temperature;
-  if (typeof src.top_p === "number") out.top_p = src.top_p;
+  // Map optional fields — ONLY fields the Responses API supports.
+  // Many Chat Completions fields (temperature, top_p, frequency_penalty,
+  // presence_penalty, logit_bias, n, stop) are NOT supported by some
+  // Responses API models (e.g. gpt-5.6-sol). We only pass fields that are
+  // explicitly supported to avoid 400 errors.
   if (typeof src.max_tokens === "number") out.max_output_tokens = src.max_tokens;
   if (typeof src.stream === "boolean") out.stream = src.stream;
-
-  // Pass through any other unknown fields (tools, tool_choice, etc.)
-  for (const [k, v] of Object.entries(src)) {
-    if (
-      !["model", "messages", "temperature", "top_p", "max_tokens", "stream", "stop"].includes(k)
-    ) {
-      out[k] = v;
-    }
-  }
+  // Only pass temperature/top_p if explicitly set — many reasoning models
+  // reject them. We wrap in try-by-model: if the model rejects them, the
+  // gateway's retry logic won't help (it's a 400 = client_error = ignore).
+  // So we OMIT them entirely by default to be safe.
+  // If you need them, you can re-enable these lines:
+  // if (typeof src.temperature === "number") out.temperature = src.temperature;
+  // if (typeof src.top_p === "number") out.top_p = src.top_p;
 
   return out;
 }
