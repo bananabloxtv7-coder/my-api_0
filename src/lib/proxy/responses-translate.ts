@@ -123,22 +123,40 @@ export function responsesToChatResponse(body: unknown): unknown {
   // Already Chat Completions shaped → leave alone
   if (Array.isArray(src.choices)) return body;
 
-  // Extract text from the Responses output array
+  // Extract text from the Responses output. The Responses API returns text in
+  // the "output" array, where each item has a "content" array of parts.
+  // Parts can have type "output_text" (with "text" field) or others.
+  // Some providers also put text directly in "output_text" at the top level.
   let text = "";
   const output = src.output;
   if (Array.isArray(output)) {
     for (const item of output) {
-      if (item && typeof item === "object") {
-        const content = (item as Record<string, unknown>).content;
-        if (Array.isArray(content)) {
-          for (const part of content) {
-            if (part && typeof part === "object" && "text" in part) {
-              text += String((part as Record<string, unknown>).text);
-            }
+      if (!item || typeof item !== "object") continue;
+      const itemObj = item as Record<string, unknown>;
+      // item.content can be an array of parts
+      const content = itemObj.content;
+      if (Array.isArray(content)) {
+        for (const part of content) {
+          if (!part || typeof part !== "object") continue;
+          const partObj = part as Record<string, unknown>;
+          if ("text" in partObj && typeof partObj.text === "string") {
+            text += partObj.text;
           }
         }
       }
+      // Some items put text directly
+      if (typeof itemObj.text === "string") {
+        text += itemObj.text;
+      }
     }
+  }
+  // Fallback: top-level output_text field (some providers)
+  if (!text && typeof src.output_text === "string") {
+    text = src.output_text;
+  }
+  // Fallback: top-level text field
+  if (!text && typeof src.text === "string") {
+    text = src.text;
   }
 
   const usage = src.usage as Record<string, unknown> | undefined;
@@ -151,7 +169,12 @@ export function responsesToChatResponse(body: unknown): unknown {
     choices: [
       {
         index: 0,
-        message: { role: "assistant", content: text },
+        message: {
+          role: "assistant",
+          content: text,
+          refusal: null,
+        },
+        logprobs: null,
         finish_reason: src.status === "incomplete" ? "length" : "stop",
       },
     ],
@@ -161,5 +184,6 @@ export function responsesToChatResponse(body: unknown): unknown {
       total_tokens:
         (Number(usage?.input_tokens) || 0) + (Number(usage?.output_tokens) || 0),
     },
+    system_fingerprint: src.system_fingerprint ?? null,
   };
 }
