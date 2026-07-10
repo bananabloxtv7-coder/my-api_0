@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useMemo } from "react";
 import { useAuth } from "@/lib/store";
 import {
   Card,
@@ -20,8 +21,21 @@ import { toast } from "sonner";
 export function SettingsPanel() {
   const { user, logout } = useAuth();
 
+  // Detect the current domain automatically (works on both Vercel and local)
+  // SSR-safe: window is only available in the browser, so we initialize
+  // lazily and read once on first client render.
+  const origin = useMemo(() => {
+    if (typeof window !== "undefined") return window.location.origin;
+    return "";
+  }, []);
+
+  // Replace YOUR_DOMAIN placeholder with the actual domain in code examples
+  function fillDomain(code: string): string {
+    return code.replace(/YOUR_DOMAIN/g, origin || "YOUR_DOMAIN");
+  }
+
   function copyCode(code: string) {
-    navigator.clipboard.writeText(code);
+    navigator.clipboard.writeText(fillDomain(code));
     toast.success("تم نسخ الكود");
   }
 
@@ -62,8 +76,11 @@ export function SettingsPanel() {
           </CardTitle>
           <CardDescription>
             البوابة شفافة تماماً — أرسل الطلب بنفس بنية المزود الأصلي، والبوابة تستبدل المفتاح فقط.
-            استبدل <code className="px-1 py-0.5 rounded bg-muted font-mono text-xs">YOUR_DOMAIN</code> و
-            <code className="px-1 py-0.5 rounded bg-muted font-mono text-xs mx-1">gw_xxx</code> بقيمك.
+            {origin ? (
+              <>دومينك الحالي: <code className="px-1 py-0.5 rounded bg-muted font-mono text-xs" dir="ltr">{origin}</code> — استبدل <code className="px-1 py-0.5 rounded bg-muted font-mono text-xs mx-1">gw_xxx</code> بمفتاحك الرئيسي.</>
+            ) : (
+              <>استبدل <code className="px-1 py-0.5 rounded bg-muted font-mono text-xs">gw_xxx</code> بمفتاحك الرئيسي.</>
+            )}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -106,6 +123,7 @@ export function SettingsPanel() {
     "messages": [{"role":"user","content":"مرحبا، كيف حالك؟"}]
   }'`}
                 onCopy={copyCode}
+                fillFn={fillDomain}
               />
               <CodeBlock
                 title="✅ DeepSeek (مُختبَر — استخدم الاسم الكامل)"
@@ -117,6 +135,7 @@ export function SettingsPanel() {
     "messages": [{"role":"user","content":"اكتب قصيدة قصيرة"}]
   }'`}
                 onCopy={copyCode}
+                fillFn={fillDomain}
               />
               <CodeBlock
                 title="✅ Qwen / GLM / Claude (مُختبَر)"
@@ -128,6 +147,7 @@ export function SettingsPanel() {
     "messages": [{"role":"user","content":"اشرح الذكاء الاصطناعي في سطرين"}]
   }'`}
                 onCopy={copyCode}
+                fillFn={fillDomain}
               />
               <CodeBlock
                 title="✅ Python (OpenAI SDK — يعمل مع كل النماذج)"
@@ -145,6 +165,7 @@ resp = client.chat.completions.create(
 )
 print(resp.choices[0].message.content)`}
                 onCopy={copyCode}
+                fillFn={fillDomain}
               />
               <div className="rounded-lg border border-blue-500/30 bg-blue-500/5 p-3 text-sm">
                 <div className="font-semibold mb-1 text-blue-600 dark:text-blue-400">
@@ -210,6 +231,7 @@ print(resp.choices[0].message.content)`}
     "generationConfig": {"responseModalities":["TEXT","IMAGE"]}
   }'`}
                 onCopy={copyCode}
+                fillFn={fillDomain}
               />
 
               <CodeBlock
@@ -223,6 +245,7 @@ print(resp.choices[0].message.content)`}
     "image_size": "1024x1024"
   }'`}
                 onCopy={copyCode}
+                fillFn={fillDomain}
               />
 
               <CodeBlock
@@ -236,6 +259,7 @@ print(resp.choices[0].message.content)`}
     "image_size": "1024x1024"
   }'`}
                 onCopy={copyCode}
+                fillFn={fillDomain}
               />
 
               <CodeBlock
@@ -250,6 +274,7 @@ print(resp.choices[0].message.content)`}
     "size": "1024x1024"
   }'`}
                 onCopy={copyCode}
+                fillFn={fillDomain}
               />
 
               <div className="rounded-lg border bg-muted/30 p-4">
@@ -330,6 +355,7 @@ elif "data" in data and data["data"]:
         f.write(img)
     print("✓ تم حفظ image.png")`}
                 onCopy={copyCode}
+                fillFn={fillDomain}
               />
             </TabsContent>
 
@@ -347,6 +373,7 @@ elif "data" in data and data["data"]:
                 code={`curl https://YOUR_DOMAIN/v1/models \\
   -H "Authorization: Bearer gw_xxx_YOUR_MASTER_KEY"`}
                 onCopy={copyCode}
+                fillFn={fillDomain}
               />
               <p className="text-sm text-muted-foreground">
                 <b>مهم:</b> استخدم أسماء النماذج كما تظهر في القائمة بالضبط (مثل
@@ -376,6 +403,7 @@ elif "data" in data and data["data"]:
     "input": "النص المراد تضمينه"
   }'`}
                 onCopy={copyCode}
+                fillFn={fillDomain}
               />
             </TabsContent>
 
@@ -404,6 +432,7 @@ elif "data" in data and data["data"]:
     "voice": "alloy"
   }' --output speech.mp3`}
                 onCopy={copyCode}
+                fillFn={fillDomain}
               />
             </TabsContent>
 
@@ -429,6 +458,7 @@ elif "data" in data and data["data"]:
     "documents": ["البوابة وسيط شفاف","الطقس اليوم مشمس"]
   }'`}
                 onCopy={copyCode}
+                fillFn={fillDomain}
               />
             </TabsContent>
 
@@ -526,7 +556,8 @@ function EndpointPaths({ paths }: { paths: string[] }) {
   );
 }
 
-function CodeBlock({ title, code, onCopy }: { title: string; code: string; onCopy: (c: string) => void }) {
+function CodeBlock({ title, code, onCopy, fillFn }: { title: string; code: string; onCopy: (c: string) => void; fillFn?: (c: string) => string }) {
+  const displayCode = fillFn ? fillFn(code) : code;
   return (
     <div className="rounded-lg border overflow-hidden">
       <div className="flex items-center justify-between px-3 py-2 bg-muted/50 border-b">
@@ -542,7 +573,7 @@ function CodeBlock({ title, code, onCopy }: { title: string; code: string; onCop
         </Button>
       </div>
       <pre className="p-3 text-xs overflow-x-auto font-mono leading-relaxed bg-background" dir="ltr">
-        {code}
+        {displayCode}
       </pre>
     </div>
   );
