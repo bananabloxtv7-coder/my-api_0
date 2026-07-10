@@ -65,4 +65,4 @@ server.log
 /.zscripts/
 /download/
 /db/*.db
-/examples/
+/examples/tool-results/

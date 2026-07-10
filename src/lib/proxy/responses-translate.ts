@@ -108,7 +108,11 @@ export function chatToResponsesRequest(body: unknown): unknown {
   };
 
   if (typeof src.max_tokens === "number") out.max_output_tokens = src.max_tokens;
-  if (typeof src.stream === "boolean") out.stream = src.stream;
+  // Force stream=false — we convert the full response. Streaming Responses
+  // API uses a different SSE format than Chat Completions, so passing
+  // stream=true would return Responses-formatted chunks that tools can't
+  // parse. We always get the full response and convert it.
+  out.stream = false;
 
   return out;
 }

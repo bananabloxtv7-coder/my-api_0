@@ -1,0 +1,1207 @@
+     1→> ## Documentation Index
+     2→> Fetch the complete documentation index at: https://apidoc.cometapi.com/llms.txt
+     3→> Use this file to discover all available pages before exploring further.
+     4→
+     5→# Create a chat completion
+     6→
+     7→> Use CometAPI POST /v1/chat/completions to send multi-message conversations to chat models with streaming, temperature, and max_tokens controls.
+     8→
+     9→CometAPI routes Chat Completions to multiple providers — including OpenAI, Claude, and Gemini — through a single OpenAI-compatible interface. Switch between models by changing the `model` parameter; most OpenAI-compatible SDKs work by setting `base_url` to `https://api.cometapi.com/v1`.
+    10→
+    11→<Warning>
+    12→  Request parameters and response fields can vary significantly between model providers. Check the official documentation for the provider behind the model you use whenever you need the complete parameter list or provider-specific behavior. For example, `reasoning_effort` only applies to reasoning models (o-series, GPT-5.1+), and some models do not support `logprobs` or `n` > 1.
+    13→</Warning>
+    14→
+    15→<Note>
+    16→  For OpenAI Pro models, o-series reasoning models, and Codex models, use the [Responses](/api/text/responses) endpoint instead. These model families have more complete support on the Responses API.
+    17→</Note>
+    18→
+    19→***
+    20→
+    21→## Message roles
+    22→
+    23→| Role        | Description                                                                                                       |
+    24→| ----------- | ----------------------------------------------------------------------------------------------------------------- |
+    25→| `system`    | Sets the assistant's behavior and personality. Placed at the start of the conversation.                           |
+    26→| `developer` | Replaces `system` for newer models (o1+). Provides instructions the model should follow regardless of user input. |
+    27→| `user`      | Messages from the end user.                                                                                       |
+    28→| `assistant` | Previous model responses, used to maintain conversation history.                                                  |
+    29→| `tool`      | Results from tool/function calls. Must include `tool_call_id` matching the original tool call.                    |
+    30→
+    31→<Tip>
+    32→  For newer models (GPT-4.1, GPT-5 series, o-series), prefer `developer` over `system` for instruction messages. Both work, but `developer` provides stronger instruction-following behavior.
+    33→</Tip>
+    34→
+    35→***
+    36→
+    37→## Send multimodal input
+    38→
+    39→Many models support images and audio alongside text. To send multimodal messages, use the array format for `content`:
+    40→
+    41→```json theme={null}
+    42→{
+    43→  "role": "user",
+    44→  "content": [
+    45→    {"type": "text", "text": "Describe this image"},
+    46→    {
+    47→      "type": "image_url",
+    48→      "image_url": {
+    49→        "url": "https://example.com/image.png",
+    50→        "detail": "high"
+    51→      }
+    52→    }
+    53→  ]
+    54→}
+    55→```
+    56→
+    57→The `detail` parameter controls image analysis depth:
+    58→
+    59→* `low` — faster, uses fewer tokens (fixed cost)
+    60→* `high` — detailed analysis, more tokens consumed
+    61→* `auto` — the model decides (default)
+    62→
+    63→***
+    64→
+    65→## Stream responses
+    66→
+    67→To receive incremental output, set `stream` to `true`. The response is delivered as **Server-Sent Events (SSE)**, where each event contains a `chat.completion.chunk` object:
+    68→
+    69→```
+    70→data: {"id":"chatcmpl-xxx","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
+    71→
+    72→data: {"id":"chatcmpl-xxx","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":null}]}
+    73→
+    74→data: {"id":"chatcmpl-xxx","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"!"},"finish_reason":null}]}
+    75→
+    76→data: {"id":"chatcmpl-xxx","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+    77→
+    78→data: [DONE]
+    79→```
+    80→
+    81→<Tip>
+    82→  To include token usage statistics in streaming responses, set `stream_options.include_usage` to `true`. The usage data appears in the final chunk before `[DONE]`.
+    83→</Tip>
+    84→
+    85→***
+    86→
+    87→## Request structured output
+    88→
+    89→To force the model to return valid JSON matching a specific schema, use `response_format`:
+    90→
+    91→<CodeGroup>
+    92→  ```json JSON Schema Mode theme={null}
+    93→  {
+    94→    "response_format": {
+    95→      "type": "json_schema",
+    96→      "json_schema": {
+    97→        "name": "result",
+    98→        "strict": true,
+    99→        "schema": {
+   100→          "type": "object",
+   101→          "properties": {
+   102→            "answer": {"type": "string"},
+   103→            "confidence": {"type": "number"}
+   104→          },
+   105→          "required": ["answer", "confidence"],
+   106→          "additionalProperties": false
+   107→        }
+   108→      }
+   109→    }
+   110→  }
+   111→  ```
+   112→
+   113→  ```json JSON Object Mode theme={null}
+   114→  {
+   115→    "response_format": {"type": "json_object"}
+   116→  }
+   117→  ```
+   118→</CodeGroup>
+   119→
+   120→<Note>
+   121→  JSON Schema mode (`json_schema`) guarantees the output matches your schema exactly. JSON Object mode (`json_object`) only guarantees valid JSON — the structure is not enforced.
+   122→</Note>
+   123→
+   124→***
+   125→
+   126→## Call tools and functions
+   127→
+   128→To enable the model to call external functions, provide tool definitions:
+   129→
+   130→```json theme={null}
+   131→{
+   132→  "tools": [
+   133→    {
+   134→      "type": "function",
+   135→      "function": {
+   136→        "name": "get_weather",
+   137→        "description": "Get current weather for a city",
+   138→        "parameters": {
+   139→          "type": "object",
+   140→          "properties": {
+   141→            "location": {"type": "string", "description": "City name"}
+   142→          },
+   143→          "required": ["location"]
+   144→        }
+   145→      }
+   146→    }
+   147→  ],
+   148→  "tool_choice": "auto"
+   149→}
+   150→```
+   151→
+   152→When the model decides to call a tool, the response will have `finish_reason: "tool_calls"` and the `message.tool_calls` array will contain the function name and arguments. You then execute the function and send the result back as a `tool` message with the matching `tool_call_id`.
+   153→
+   154→***
+   155→
+   156→## Cross-provider notes
+   157→
+   158→<AccordionGroup>
+   159→  <Accordion title="Parameter support across providers">
+   160→    | Parameter          | OpenAI GPT         | Claude (via compat) | Gemini (via compat)                  |
+   161→    | ------------------ | ------------------ | ------------------- | ------------------------------------ |
+   162→    | `temperature`      | 0–2                | 0–1                 | 0–2                                  |
+   163→    | `top_p`            | 0–1                | 0–1                 | 0–1                                  |
+   164→    | `n`                | 1–128              | 1 only              | 1–8                                  |
+   165→    | `stop`             | Up to 4            | Up to 4             | Up to 5                              |
+   166→    | `tools`            | ✅                  | ✅                   | ✅                                    |
+   167→    | `response_format`  | ✅                  | ✅ (json\_schema)    | ✅                                    |
+   168→    | `logprobs`         | ✅                  | ❌                   | ❌                                    |
+   169→    | `reasoning_effort` | o-series, GPT-5.1+ | ❌                   | ❌ (use `thinking` for Gemini native) |
+   170→  </Accordion>
+   171→
+   172→  <Accordion title="max_tokens vs max_completion_tokens">
+   173→    * **`max_tokens`** — The legacy parameter. Works with most models but is deprecated for newer OpenAI models.
+   174→    * **`max_completion_tokens`** — The recommended parameter for GPT-4.1, GPT-5 series, and o-series models. Required for reasoning models as it includes both output tokens and reasoning tokens.
+   175→
+   176→    CometAPI automatically handles the mapping when routing to different providers.
+   177→  </Accordion>
+   178→
+   179→  <Accordion title="system vs developer role">
+   180→    * **`system`** — The traditional instruction role. Works with all models.
+   181→    * **`developer`** — Introduced with o1 models. Provides stronger instruction-following for newer models. Falls back to `system` behavior on older models.
+   182→
+   183→    Use `developer` for new projects targeting GPT-4.1+ or o-series models.
+   184→  </Accordion>
+   185→</AccordionGroup>
+   186→
+   187→***
+   188→
+   189→## FAQ
+   190→
+   191→### How to handle rate limits?
+   192→
+   193→When encountering `429 Too Many Requests`, implement exponential backoff:
+   194→
+   195→```python theme={null}
+   196→import os
+   197→import time
+   198→import random
+   199→from openai import OpenAI, RateLimitError
+   200→
+   201→client = OpenAI(
+   202→    base_url="https://api.cometapi.com/v1",
+   203→    api_key=os.environ["COMETAPI_KEY"],
+   204→)
+   205→
+   206→def chat_with_retry(messages, max_retries=3):
+   207→    for i in range(max_retries):
+   208→        try:
+   209→            return client.chat.completions.create(
+   210→                model="gpt-5.4",
+   211→                messages=messages,
+   212→            )
+   213→        except RateLimitError:
+   214→            if i < max_retries - 1:
+   215→                wait_time = (2 ** i) + random.random()
+   216→                time.sleep(wait_time)
+   217→            else:
+   218→                raise
+   219→```
+   220→
+   221→### How to maintain conversation context?
+   222→
+   223→Include the full conversation history in the `messages` array:
+   224→
+   225→```python theme={null}
+   226→messages = [
+   227→    {"role": "developer", "content": "You are a helpful assistant."},
+   228→    {"role": "user", "content": "What is Python?"},
+   229→    {"role": "assistant", "content": "Python is a high-level programming language..."},
+   230→    {"role": "user", "content": "What are its main advantages?"},
+   231→]
+   232→```
+   233→
+   234→### What does `finish_reason` mean?
+   235→
+   236→| Value            | Meaning                                                |
+   237→| ---------------- | ------------------------------------------------------ |
+   238→| `stop`           | Natural completion or hit a stop sequence.             |
+   239→| `length`         | Reached `max_tokens` or `max_completion_tokens` limit. |
+   240→| `tool_calls`     | The model invoked one or more tool/function calls.     |
+   241→| `content_filter` | Output was filtered due to content policy.             |
+   242→
+   243→### How to control costs?
+   244→
+   245→1. Use `max_completion_tokens` to cap output length.
+   246→2. Choose cost-effective models (e.g., `gpt-5.4-mini` or `gpt-5.4-nano` for simpler tasks).
+   247→3. Keep prompts concise — avoid redundant context.
+   248→4. Monitor token usage in the `usage` response field.
+   249→
+   250→
+   251→## OpenAPI
+   252→
+   253→````yaml api/openapi/text/post-chat.openapi.json POST /v1/chat/completions
+   254→openapi: 3.1.0
+   255→info:
+   256→  title: Chat Completions API
+   257→  version: 1.0.0
+   258→servers:
+   259→  - url: https://api.cometapi.com
+   260→security:
+   261→  - bearerAuth: []
+   262→paths:
+   263→  /v1/chat/completions:
+   264→    post:
+   265→      summary: Chat Completions
+   266→      description: >-
+   267→        Routes chat requests across multiple model providers. Request parameters
+   268→        and response fields can vary significantly by provider, so check the
+   269→        official documentation for the provider behind the model you use when
+   270→        you need provider-specific parameters or behavior details.
+   271→      operationId: chat_completions
+   272→      requestBody:
+   273→        required: true
+   274→        content:
+   275→          application/json:
+   276→            schema:
+   277→              type: object
+   278→              required:
+   279→                - model
+   280→                - messages
+   281→              properties:
+   282→                model:
+   283→                  type: string
+   284→                  description: >-
+   285→                    Model ID to use for this request. See the [Models
+   286→                    page](/overview/models) for current options.
+   287→                  example: gpt-4.1
+   288→                  default: gpt-5.4
+   289→                messages:
+   290→                  type: array
+   291→                  description: >-
+   292→                    A list of messages forming the conversation. Each message
+   293→                    has a `role` (`system`, `user`, `assistant`, or `developer`)
+   294→                    and `content` (text string or multimodal content array).
+   295→                  items:
+   296→                    type: object
+   297→                    properties:
+   298→                      role:
+   299→                        type: string
+   300→                        enum:
+   301→                          - system
+   302→                          - user
+   303→                          - assistant
+   304→                          - tool
+   305→                          - developer
+   306→                        description: >-
+   307→                          The role of the message author. Common values:
+   308→                          `system` (recommended for system-level instructions),
+   309→                          `user`, `assistant`, `tool`. Newer OpenAI models may
+   310→                          also accept `developer` instead of `system`.
+   311→                      content:
+   312→                        type: string
+   313→                        description: >-
+   314→                          The message content. Can be a text string or an array
+   315→                          of content objects for multimodal input (text +
+   316→                          images).
+   317→                  default:
+   318→                    - role: system
+   319→                      content: You are a helpful assistant.
+   320→                    - role: user
+   321→                      content: Hello!
+   322→                stream:
+   323→                  type: boolean
+   324→                  description: >-
+   325→                    If `true`, partial response tokens are delivered
+   326→                    incrementally via server-sent events (SSE). The stream ends
+   327→                    with a `data: [DONE]` message.
+   328→                temperature:
+   329→                  type: number
+   330→                  description: >-
+   331→                    Sampling temperature between 0 and 2. Higher values (e.g.,
+   332→                    0.8) produce more random output; lower values (e.g., 0.2)
+   333→                    make output more focused and deterministic. Recommended to
+   334→                    adjust this or `top_p`, but not both.
+   335→                  minimum: 0
+   336→                  maximum: 2
+   337→                  default: 1
+   338→                top_p:
+   339→                  type: number
+   340→                  description: >-
+   341→                    Nucleus sampling parameter. The model considers only the
+   342→                    tokens whose cumulative probability reaches `top_p`. For
+   343→                    example, 0.1 means only the top 10% probability tokens are
+   344→                    considered. Recommended to adjust this or `temperature`, but
+   345→                    not both.
+   346→                  minimum: 0
+   347→                  maximum: 1
+   348→                  default: 1
+   349→                'n':
+   350→                  type: integer
+   351→                  description: >-
+   352→                    Number of completion choices to generate for each input
+   353→                    message. Defaults to 1.
+   354→                  default: 1
+   355→                stop:
+   356→                  type: string
+   357→                  description: >-
+   358→                    Up to 4 sequences where the API will stop generating further
+   359→                    tokens. Can be a string or an array of strings.
+   360→                max_tokens:
+   361→                  type: integer
+   362→                  description: >-
+   363→                    Maximum number of tokens to generate in the completion. The
+   364→                    total of input + output tokens is capped by the model's
+   365→                    context length.
+   366→                presence_penalty:
+   367→                  type: number
+   368→                  description: >-
+   369→                    Number between -2.0 and 2.0. Positive values penalize tokens
+   370→                    based on whether they have already appeared, encouraging the
+   371→                    model to explore new topics.
+   372→                  minimum: -2
+   373→                  maximum: 2
+   374→                  default: 0
+   375→                frequency_penalty:
+   376→                  type: number
+   377→                  description: >-
+   378→                    Number between -2.0 and 2.0. Positive values penalize tokens
+   379→                    proportionally to how often they have appeared, reducing
+   380→                    verbatim repetition.
+   381→                  minimum: -2
+   382→                  maximum: 2
+   383→                  default: 0
+   384→                logit_bias:
+   385→                  type: object
+   386→                  description: >-
+   387→                    A JSON object mapping token IDs to bias values from -100 to
+   388→                    100. The bias is added to the model's logits before
+   389→                    sampling. Values between -1 and 1 subtly adjust likelihood;
+   390→                    -100 or 100 effectively ban or force selection of a token.
+   391→                user:
+   392→                  type: string
+   393→                  description: >-
+   394→                    A unique identifier for your end-user. Helps with abuse
+   395→                    detection and monitoring.
+   396→                max_completion_tokens:
+   397→                  type: integer
+   398→                  description: >-
+   399→                    An upper bound for the number of tokens to generate,
+   400→                    including visible output tokens and reasoning tokens. Use
+   401→                    this instead of `max_tokens` for GPT-4.1+, GPT-5 series, and
+   402→                    o-series models.
+   403→                response_format:
+   404→                  type: object
+   405→                  description: >-
+   406→                    Specifies the output format. Use `{"type": "json_object"}`
+   407→                    for JSON mode, or `{"type": "json_schema", "json_schema":
+   408→                    {...}}` for strict structured output.
+   409→                  properties:
+   410→                    type:
+   411→                      type: string
+   412→                      enum:
+   413→                        - text
+   414→                        - json_object
+   415→                        - json_schema
+   416→                      description: >-
+   417→                        Output format type: `text` (default), `json_object`, or
+   418→                        `json_schema`.
+   419→                    json_schema:
+   420→                      type: object
+   421→                      description: The JSON Schema definition.
+   422→                tools:
+   423→                  type: array
+   424→                  description: >-
+   425→                    A list of tools the model may call. Currently supports
+   426→                    `function` type tools.
+   427→                  items:
+   428→                    type: object
+   429→                    properties:
+   430→                      type:
+   431→                        type: string
+   432→                        enum:
+   433→                          - function
+   434→                        description: Tool type. Use `function`.
+   435→                      function:
+   436→                        type: object
+   437→                        properties:
+   438→                          name:
+   439→                            type: string
+   440→                            description: >-
+   441→                              Function name. The model repeats it inside
+   442→                              `tool_calls` when it calls the tool.
+   443→                          description:
+   444→                            type: string
+   445→                            description: >-
+   446→                              What the function does. The model uses this text
+   447→                              to decide when to call it.
+   448→                          parameters:
+   449→                            type: object
+   450→                            description: >-
+   451→                              JSON Schema object that describes the function
+   452→                              arguments.
+   453→                          strict:
+   454→                            type: boolean
+   455→                            description: >-
+   456→                              If `true`, the model must produce arguments that
+   457→                              exactly match the JSON Schema.
+   458→                        description: The function definition the model may call.
+   459→                tool_choice:
+   460→                  type:
+   461→                    - string
+   462→                    - object
+   463→                  description: >-
+   464→                    Controls how the model selects tools. `auto` (default):
+   465→                    model decides. `none`: no tools. `required`: must call a
+   466→                    tool.
+   467→                  default: auto
+   468→                logprobs:
+   469→                  type: boolean
+   470→                  description: Whether to return log probabilities of the output tokens.
+   471→                  default: false
+   472→                top_logprobs:
+   473→                  type: integer
+   474→                  description: >-
+   475→                    Number of most likely tokens to return at each position
+   476→                    (0-20). Requires `logprobs` to be `true`.
+   477→                  minimum: 0
+   478→                  maximum: 20
+   479→                reasoning_effort:
+   480→                  type: string
+   481→                  description: >-
+   482→                    Controls the reasoning effort for o-series and GPT-5.1+
+   483→                    models.
+   484→                  enum:
+   485→                    - low
+   486→                    - medium
+   487→                    - high
+   488→                stream_options:
+   489→                  type: object
+   490→                  description: Options for streaming. Only valid when `stream` is `true`.
+   491→                  properties:
+   492→                    include_usage:
+   493→                      type: boolean
+   494→                      description: >-
+   495→                        If true, includes usage stats in the final streaming
+   496→                        chunk.
+   497→                service_tier:
+   498→                  type: string
+   499→                  description: Specifies the processing tier.
+   500→                  enum:
+   501→                    - auto
+   502→                    - default
+   503→                    - flex
+   504→                    - priority
+   505→              default:
+   506→                model: gpt-5.4
+   507→                messages:
+   508→                  - role: system
+   509→                    content: You are a helpful assistant.
+   510→                  - role: user
+   511→                    content: Hello!
+   512→            examples:
+   513→              Default:
+   514→                summary: Default
+   515→                value:
+   516→                  model: gpt-5.4
+   517→                  messages:
+   518→                    - role: system
+   519→                      content: You are a helpful assistant.
+   520→                    - role: user
+   521→                      content: Hello!
+   522→              Image Input:
+   523→                summary: Image Input
+   524→                value:
+   525→                  model: gpt-4.1
+   526→                  messages:
+   527→                    - role: user
+   528→                      content:
+   529→                        - type: text
+   530→                          text: What is in this image?
+   531→                        - type: image_url
+   532→                          image_url:
+   533→                            url: https://picsum.photos/1920/1080
+   534→                  max_tokens: 300
+   535→              Streaming:
+   536→                summary: Streaming
+   537→                value:
+   538→                  model: gpt-5.4
+   539→                  messages:
+   540→                    - role: system
+   541→                      content: You are a helpful assistant.
+   542→                    - role: user
+   543→                      content: Hello!
+   544→                  stream: true
+   545→              Function Calling:
+   546→                summary: Function Calling
+   547→                value:
+   548→                  model: gpt-5.4
+   549→                  messages:
+   550→                    - role: user
+   551→                      content: What is the weather like in Boston today?
+   552→                  tools:
+   553→                    - type: function
+   554→                      function:
+   555→                        name: get_current_weather
+   556→                        description: Get the current weather in a given location
+   557→                        parameters:
+   558→                          type: object
+   559→                          properties:
+   560→                            location:
+   561→                              type: string
+   562→                              description: The city and state, e.g. San Francisco, CA
+   563→                            unit:
+   564→                              type: string
+   565→                              enum:
+   566→                                - celsius
+   567→                                - fahrenheit
+   568→                              description: Temperature unit.
+   569→                          required:
+   570→                            - location
+   571→                  tool_choice: auto
+   572→      responses:
+   573→        '200':
+   574→          description: Successful chat completion response.
+   575→          content:
+   576→            application/json:
+   577→              schema:
+   578→                type: object
+   579→                properties:
+   580→                  id:
+   581→                    type: string
+   582→                    description: Unique completion identifier.
+   583→                    example: chatcmpl-abc123
+   584→                  object:
+   585→                    type: string
+   586→                    enum:
+   587→                      - chat.completion
+   588→                    example: chat.completion
+   589→                    description: >-
+   590→                      Object type. Non-streaming responses use
+   591→                      `chat.completion`.
+   592→                  created:
+   593→                    type: integer
+   594→                    description: Unix timestamp of creation.
+   595→                    example: 1774412483
+   596→                  model:
+   597→                    type: string
+   598→                    description: The model used (may include version suffix).
+   599→                    example: gpt-5.4-2026-03-05
+   600→                  choices:
+   601→                    type: array
+   602→                    description: Array of completion choices.
+   603→                    items:
+   604→                      type: object
+   605→                      properties:
+   606→                        index:
+   607→                          type: integer
+   608→                          description: Index of this choice in the `choices` array.
+   609→                        message:
+   610→                          type: object
+   611→                          properties:
+   612→                            role:
+   613→                              type: string
+   614→                              enum:
+   615→                                - assistant
+   616→                              description: Role of the generated message, `assistant`.
+   617→                            content:
+   618→                              type:
+   619→                                - string
+   620→                                - 'null'
+   621→                              description: >-
+   622→                                The generated text. null when the model calls
+   623→                                tools.
+   624→                            refusal:
+   625→                              type:
+   626→                                - string
+   627→                                - 'null'
+   628→                              description: Refusal message if the model refused.
+   629→                            tool_calls:
+   630→                              type: array
+   631→                              description: Tool calls the model wants to make.
+   632→                              items:
+   633→                                type: object
+   634→                                properties:
+   635→                                  id:
+   636→                                    type: string
+   637→                                    description: >-
+   638→                                      Unique ID of the tool call. Send it back
+   639→                                      as `tool_call_id` with the tool result
+   640→                                      message.
+   641→                                  type:
+   642→                                    type: string
+   643→                                    enum:
+   644→                                      - function
+   645→                                    description: Tool call type, `function`.
+   646→                                  function:
+   647→                                    type: object
+   648→                                    properties:
+   649→                                      name:
+   650→                                        type: string
+   651→                                        description: Name of the function to call.
+   652→                                      arguments:
+   653→                                        type: string
+   654→                                        description: >-
+   655→                                          Function arguments as a JSON-encoded
+   656→                                          string. Parse before use; the model can
+   657→                                          produce invalid JSON.
+   658→                                    description: The function the model wants to call.
+   659→                            annotations:
+   660→                              type: array
+   661→                              items:
+   662→                                type: object
+   663→                              description: >-
+   664→                                Annotations attached to the message content,
+   665→                                such as URL citations, when the provider returns
+   666→                                them.
+   667→                          description: The assistant message generated by the model.
+   668→                        logprobs:
+   669→                          type:
+   670→                            - object
+   671→                            - 'null'
+   672→                          description: >-
+   673→                            Log probability details when the request sets
+   674→                            `logprobs`; otherwise `null`.
+   675→                        finish_reason:
+   676→                          type: string
+   677→                          enum:
+   678→                            - stop
+   679→                            - length
+   680→                            - tool_calls
+   681→                            - content_filter
+   682→                          description: >-
+   683→                            Why generation stopped: `stop`, `length`,
+   684→                            `tool_calls`, or `content_filter`.
+   685→                  usage:
+   686→                    type: object
+   687→                    properties:
+   688→                      prompt_tokens:
+   689→                        type: integer
+   690→                        example: 29
+   691→                        description: Tokens in the input messages.
+   692→                      completion_tokens:
+   693→                        type: integer
+   694→                        example: 2
+   695→                        description: >-
+   696→                          Tokens generated in the completion, including
+   697→                          reasoning tokens for reasoning models.
+   698→                      total_tokens:
+   699→                        type: integer
+   700→                        example: 31
+   701→                        description: Sum of prompt and completion tokens.
+   702→                      prompt_tokens_details:
+   703→                        type: object
+   704→                        properties:
+   705→                          cached_tokens:
+   706→                            type: integer
+   707→                            example: 0
+   708→                            description: >-
+   709→                              Prompt tokens served from the provider prompt
+   710→                              cache.
+   711→                          audio_tokens:
+   712→                            type: integer
+   713→                            example: 0
+   714→                            description: Prompt tokens that came from audio input.
+   715→                        description: Breakdown of prompt token sources.
+   716→                      completion_tokens_details:
+   717→                        type: object
+   718→                        properties:
+   719→                          reasoning_tokens:
+   720→                            type: integer
+   721→                            example: 0
+   722→                            description: >-
+   723→                              Tokens the model spent on internal reasoning.
+   724→                              Billed as output tokens.
+   725→                          audio_tokens:
+   726→                            type: integer
+   727→                            example: 0
+   728→                            description: Completion tokens used for audio output.
+   729→                          accepted_prediction_tokens:
+   730→                            type: integer
+   731→                            example: 0
+   732→                            description: >-
+   733→                              Predicted-output tokens that matched the final
+   734→                              output and were accepted.
+   735→                          rejected_prediction_tokens:
+   736→                            type: integer
+   737→                            example: 0
+   738→                            description: >-
+   739→                              Predicted-output tokens that did not match the
+   740→                              final output and were discarded.
+   741→                        description: Breakdown of completion token usage.
+   742→                    description: >-
+   743→                      Token accounting for this request. Billing uses these
+   744→                      counts.
+   745→                  service_tier:
+   746→                    type: string
+   747→                    example: default
+   748→                    description: >-
+   749→                      Service tier that processed the request, when the provider
+   750→                      reports one.
+   751→                  system_fingerprint:
+   752→                    type:
+   753→                      - string
+   754→                      - 'null'
+   755→                    example: fp_490a4ad033
+   756→                    description: >-
+   757→                      Provider backend configuration fingerprint, when the
+   758→                      provider reports one.
+   759→              example:
+   760→                id: chatcmpl-DNA27oKtBUL8TmbGpBM3B3zhWgYfZ
+   761→                object: chat.completion
+   762→                created: 1774412483
+   763→                model: gpt-4.1-nano-2025-04-14
+   764→                choices:
+   765→                  - index: 0
+   766→                    message:
+   767→                      role: assistant
+   768→                      content: Four
+   769→                      refusal: null
+   770→                      annotations: []
+   771→                    logprobs: null
+   772→                    finish_reason: stop
+   773→                usage:
+   774→                  prompt_tokens: 29
+   775→                  completion_tokens: 2
+   776→                  total_tokens: 31
+   777→                  prompt_tokens_details:
+   778→                    cached_tokens: 0
+   779→                    audio_tokens: 0
+   780→                  completion_tokens_details:
+   781→                    reasoning_tokens: 0
+   782→                    audio_tokens: 0
+   783→                    accepted_prediction_tokens: 0
+   784→                    rejected_prediction_tokens: 0
+   785→                service_tier: default
+   786→                system_fingerprint: fp_490a4ad033
+   787→        '400':
+   788→          description: >-
+   789→            Request validation failed before the request could be processed
+   790→            normally.
+   791→          content:
+   792→            application/json:
+   793→              schema:
+   794→                $ref: '#/components/schemas/ErrorResponse'
+   795→              example:
+   796→                error:
+   797→                  code: ''
+   798→                  message: 'model name is required (request id: <request_id>)'
+   799→                  type: comet_api_error
+   800→        '401':
+   801→          description: API key is missing, malformed, or invalid.
+   802→          content:
+   803→            application/json:
+   804→              schema:
+   805→                $ref: '#/components/schemas/ErrorResponse'
+   806→              example:
+   807→                error:
+   808→                  code: ''
+   809→                  message: 'invalid token (request id: <request_id>)'
+   810→                  type: comet_api_error
+   811→        '500':
+   812→          description: >-
+   813→            Internal failure or a request-shape error surfaced as a
+   814→            server-status response.
+   815→          content:
+   816→            application/json:
+   817→              schema:
+   818→                $ref: '#/components/schemas/ErrorResponse'
+   819→              example:
+   820→                error:
+   821→                  message: 'field messages is required (request id: <request_id>)'
+   822→                  type: comet_api_error
+   823→                  param: ''
+   824→                  code: invalid_request
+   825→      x-codeSamples:
+   826→        - lang: Python
+   827→          label: Default
+   828→          source: |
+   829→            import os
+   830→            from openai import OpenAI
+   831→            client = OpenAI(
+   832→                base_url="https://api.cometapi.com/v1",
+   833→                api_key=os.environ["COMETAPI_KEY"],
+   834→            )
+   835→
+   836→            completion = client.chat.completions.create(
+   837→                model="gpt-5.4",
+   838→                messages=[
+   839→                    {"role": "system", "content": "You are a helpful assistant."},
+   840→                    {"role": "user", "content": "Hello!"},
+   841→                ],
+   842→            )
+   843→
+   844→            print(completion.choices[0].message)
+   845→        - lang: Python
+   846→          label: Image Input
+   847→          source: |
+   848→            import os
+   849→            from openai import OpenAI
+   850→            client = OpenAI(
+   851→                base_url="https://api.cometapi.com/v1",
+   852→                api_key=os.environ["COMETAPI_KEY"],
+   853→            )
+   854→
+   855→            completion = client.chat.completions.create(
+   856→                model="gpt-4.1",
+   857→                messages=[
+   858→                    {
+   859→                        "role": "user",
+   860→                        "content": [
+   861→                            {"type": "text", "text": "What is in this image?"},
+   862→                            {
+   863→                                "type": "image_url",
+   864→                                "image_url": {"url": "https://picsum.photos/1920/1080"},
+   865→                            },
+   866→                        ],
+   867→                    }
+   868→                ],
+   869→                max_tokens=300,
+   870→            )
+   871→
+   872→            print(completion.choices[0].message)
+   873→        - lang: Python
+   874→          label: Streaming
+   875→          source: |
+   876→            import os
+   877→            from openai import OpenAI
+   878→            client = OpenAI(
+   879→                base_url="https://api.cometapi.com/v1",
+   880→                api_key=os.environ["COMETAPI_KEY"],
+   881→            )
+   882→
+   883→            stream = client.chat.completions.create(
+   884→                model="gpt-5.4",
+   885→                messages=[
+   886→                    {"role": "system", "content": "You are a helpful assistant."},
+   887→                    {"role": "user", "content": "Hello!"},
+   888→                ],
+   889→                stream=True,
+   890→            )
+   891→
+   892→            for chunk in stream:
+   893→                if chunk.choices[0].delta.content is not None:
+   894→                    print(chunk.choices[0].delta.content, end="")
+   895→        - lang: Python
+   896→          label: Functions
+   897→          source: |
+   898→            import os
+   899→            from openai import OpenAI
+   900→
+   901→            client = OpenAI(
+   902→                base_url="https://api.cometapi.com/v1",
+   903→                api_key=os.environ["COMETAPI_KEY"],
+   904→            )
+   905→
+   906→            completion = client.chat.completions.create(
+   907→                model="gpt-4.1",
+   908→                messages=[
+   909→                    {"role": "user", "content": "What is the weather like in Boston today?"}
+   910→                ],
+   911→                tools=[
+   912→                    {
+   913→                        "type": "function",
+   914→                        "function": {
+   915→                            "name": "get_current_weather",
+   916→                            "description": "Get the current weather in a given location",
+   917→                            "parameters": {
+   918→                                "type": "object",
+   919→                                "properties": {
+   920→                                    "location": {
+   921→                                        "type": "string",
+   922→                                        "description": "The city and state, e.g. San Francisco, CA",
+   923→                                    },
+   924→                                    "unit": {"type": "string", "enum": ["celsius", "fahrenheit"]},
+   925→                                },
+   926→                                "required": ["location"],
+   927→                            },
+   928→                        },
+   929→                    }
+   930→                ],
+   931→                tool_choice="auto",
+   932→            )
+   933→
+   934→            print(completion.choices[0].message)
+   935→        - lang: Python
+   936→          label: Logprobs
+   937→          source: |
+   938→            import os
+   939→            from openai import OpenAI
+   940→
+   941→            client = OpenAI(
+   942→                base_url="https://api.cometapi.com/v1",
+   943→                api_key=os.environ["COMETAPI_KEY"],
+   944→            )
+   945→
+   946→            completion = client.chat.completions.create(
+   947→                model="gpt-5.4",
+   948→                messages=[
+   949→                    {"role": "user", "content": "Hello!"}
+   950→                ],
+   951→                logprobs=True,
+   952→                top_logprobs=2,
+   953→            )
+   954→
+   955→            print(completion.choices[0].logprobs)
+   956→        - lang: JavaScript
+   957→          label: Default
+   958→          source: |
+   959→            import OpenAI from "openai";
+   960→
+   961→            const client = new OpenAI({
+   962→                baseURL: "https://api.cometapi.com/v1",
+   963→                apiKey: process.env.COMETAPI_KEY,
+   964→            });
+   965→
+   966→            const completion = await client.chat.completions.create({
+   967→                model: "gpt-5.4",
+   968→                messages: [
+   969→                    { role: "system", content: "You are a helpful assistant." },
+   970→                    { role: "user", content: "Hello!" },
+   971→                ],
+   972→            });
+   973→
+   974→            console.log(completion.choices[0].message);
+   975→        - lang: JavaScript
+   976→          label: Image Input
+   977→          source: |
+   978→            import OpenAI from "openai";
+   979→
+   980→            const client = new OpenAI({
+   981→                baseURL: "https://api.cometapi.com/v1",
+   982→                apiKey: process.env.COMETAPI_KEY,
+   983→            });
+   984→
+   985→            const completion = await client.chat.completions.create({
+   986→                model: "gpt-4.1",
+   987→                messages: [
+   988→                    {
+   989→                        role: "user",
+   990→                        content: [
+   991→                            { type: "text", text: "What is in this image?" },
+   992→                            {
+   993→                                type: "image_url",
+   994→                                image_url: { url: "https://picsum.photos/1920/1080" },
+   995→                            },
+   996→                        ],
+   997→                    },
+   998→                ],
+   999→                max_tokens: 300,
+  1000→            });
+  1001→
+  1002→            console.log(completion.choices[0].message);
+  1003→        - lang: JavaScript
+  1004→          label: Streaming
+  1005→          source: |
+  1006→            import OpenAI from "openai";
+  1007→
+  1008→            const client = new OpenAI({
+  1009→                baseURL: "https://api.cometapi.com/v1",
+  1010→                apiKey: process.env.COMETAPI_KEY,
+  1011→            });
+  1012→
+  1013→            const stream = await client.chat.completions.create({
+  1014→                model: "gpt-5.4",
+  1015→                messages: [
+  1016→                    { role: "system", content: "You are a helpful assistant." },
+  1017→                    { role: "user", content: "Hello!" },
+  1018→                ],
+  1019→                stream: true,
+  1020→            });
+  1021→
+  1022→            for await (const chunk of stream) {
+  1023→                process.stdout.write(chunk.choices[0]?.delta?.content || "");
+  1024→            }
+  1025→        - lang: JavaScript
+  1026→          label: Functions
+  1027→          source: |
+  1028→            import OpenAI from "openai";
+  1029→
+  1030→            const client = new OpenAI({
+  1031→                baseURL: "https://api.cometapi.com/v1",
+  1032→                apiKey: process.env.COMETAPI_KEY,
+  1033→            });
+  1034→
+  1035→            const completion = await client.chat.completions.create({
+  1036→                model: "gpt-4.1",
+  1037→                messages: [
+  1038→                    { role: "user", content: "What is the weather like in Boston today?" },
+  1039→                ],
+  1040→                tools: [
+  1041→                    {
+  1042→                        type: "function",
+  1043→                        function: {
+  1044→                            name: "get_current_weather",
+  1045→                            description: "Get the current weather in a given location",
+  1046→                            parameters: {
+  1047→                                type: "object",
+  1048→                                properties: {
+  1049→                                    location: { type: "string", description: "The city and state" },
+  1050→                                    unit: { type: "string", enum: ["celsius", "fahrenheit"] },
+  1051→                                },
+  1052→                                required: ["location"],
+  1053→                            },
+  1054→                        },
+  1055→                    },
+  1056→                ],
+  1057→                tool_choice: "auto",
+  1058→            });
+  1059→
+  1060→            console.log(completion.choices[0].message);
+  1061→        - lang: JavaScript
+  1062→          label: Logprobs
+  1063→          source: |
+  1064→            import OpenAI from "openai";
+  1065→
+  1066→            const client = new OpenAI({
+  1067→                baseURL: "https://api.cometapi.com/v1",
+  1068→                apiKey: process.env.COMETAPI_KEY,
+  1069→            });
+  1070→
+  1071→            const completion = await client.chat.completions.create({
+  1072→                model: "gpt-5.4",
+  1073→                messages: [
+  1074→                    { role: "user", content: "Hello!" },
+  1075→                ],
+  1076→                logprobs: true,
+  1077→                top_logprobs: 2,
+  1078→            });
+  1079→
+  1080→            console.log(completion.choices[0].logprobs);
+  1081→        - lang: Shell
+  1082→          label: Default
+  1083→          source: |
+  1084→            curl https://api.cometapi.com/v1/chat/completions \
+  1085→              -H "Content-Type: application/json" \
+  1086→              -H "Authorization: Bearer $COMETAPI_KEY" \
+  1087→              -d '{
+  1088→                "model": "gpt-5.4",
+  1089→                "messages": [
+  1090→                  {"role": "system", "content": "You are a helpful assistant."},
+  1091→                  {"role": "user", "content": "Hello!"}
+  1092→                ]
+  1093→              }'
+  1094→        - lang: Shell
+  1095→          label: Image Input
+  1096→          source: |
+  1097→            curl https://api.cometapi.com/v1/chat/completions \
+  1098→              -H "Content-Type: application/json" \
+  1099→              -H "Authorization: Bearer $COMETAPI_KEY" \
+  1100→              -d '{
+  1101→                "model": "gpt-4.1",
+  1102→                "messages": [
+  1103→                  {
+  1104→                    "role": "user",
+  1105→                    "content": [
+  1106→                      {"type": "text", "text": "What is in this image?"},
+  1107→                      {"type": "image_url", "image_url": {"url": "https://picsum.photos/1920/1080"}}
+  1108→                    ]
+  1109→                  }
+  1110→                ],
+  1111→                "max_tokens": 300
+  1112→              }'
+  1113→        - lang: Shell
+  1114→          label: Streaming
+  1115→          source: |
+  1116→            curl https://api.cometapi.com/v1/chat/completions \
+  1117→              -H "Content-Type: application/json" \
+  1118→              -H "Authorization: Bearer $COMETAPI_KEY" \
+  1119→              -d '{
+  1120→                "model": "gpt-5.4",
+  1121→                "messages": [
+  1122→                  {"role": "system", "content": "You are a helpful assistant."},
+  1123→                  {"role": "user", "content": "Hello!"}
+  1124→                ],
+  1125→                "stream": true
+  1126→              }'
+  1127→        - lang: Shell
+  1128→          label: Functions
+  1129→          source: |
+  1130→            curl https://api.cometapi.com/v1/chat/completions \
+  1131→              -H "Content-Type: application/json" \
+  1132→              -H "Authorization: Bearer $COMETAPI_KEY" \
+  1133→              -d '{
+  1134→                "model": "gpt-4.1",
+  1135→                "messages": [
+  1136→                  {"role": "user", "content": "What is the weather like in Boston today?"}
+  1137→                ],
+  1138→                "tools": [
+  1139→                  {
+  1140→                    "type": "function",
+  1141→                    "function": {
+  1142→                      "name": "get_current_weather",
+  1143→                      "description": "Get the current weather in a given location",
+  1144→                      "parameters": {
+  1145→                        "type": "object",
+  1146→                        "properties": {
+  1147→                          "location": {"type": "string", "description": "The city and state"},
+  1148→                          "unit": {"type": "string", "enum": ["celsius", "fahrenheit"]}
+  1149→                        },
+  1150→                        "required": ["location"]
+  1151→                      }
+  1152→                    }
+  1153→                  }
+  1154→                ],
+  1155→                "tool_choice": "auto"
+  1156→              }'
+  1157→        - lang: Shell
+  1158→          label: Logprobs
+  1159→          source: |
+  1160→            curl https://api.cometapi.com/v1/chat/completions \
+  1161→              -H "Content-Type: application/json" \
+  1162→              -H "Authorization: Bearer $COMETAPI_KEY" \
+  1163→              -d '{
+  1164→                "model": "gpt-5.4",
+  1165→                "messages": [
+  1166→                  {"role": "user", "content": "Hello!"}
+  1167→                ],
+  1168→                "logprobs": true,
+  1169→                "top_logprobs": 2
+  1170→              }'
+  1171→components:
+  1172→  schemas:
+  1173→    ErrorResponse:
+  1174→      type: object
+  1175→      required:
+  1176→        - error
+  1177→      properties:
+  1178→        error:
+  1179→          type: object
+  1180→          required:
+  1181→            - message
+  1182→            - type
+  1183→          properties:
+  1184→            message:
+  1185→              type: string
+  1186→              description: Human-readable error message. It often includes a request id.
+  1187→            type:
+  1188→              type: string
+  1189→              description: CometAPI error type, such as `comet_api_error`.
+  1190→            param:
+  1191→              type:
+  1192→                - string
+  1193→                - 'null'
+  1194→              description: Related parameter when the platform provides one.
+  1195→            code:
+  1196→              type:
+  1197→                - string
+  1198→                - 'null'
+  1199→              description: Error code. Request-shape errors may use `invalid_request`.
+  1200→          description: Error envelope returned for failed requests.
+  1201→  securitySchemes:
+  1202→    bearerAuth:
+  1203→      type: http
+  1204→      scheme: bearer
+  1205→      description: Bearer token authentication. Use your CometAPI key.
+  1206→
+  1207→````
