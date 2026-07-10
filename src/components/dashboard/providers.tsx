@@ -693,6 +693,8 @@ function KeysManager({ providerId, keys }: { providerId: string; keys: KeyItem[]
   const [adding, setAdding] = useState(false);
   const [newKey, setNewKey] = useState("");
   const [newName, setNewName] = useState("");
+  const [bulkMode, setBulkMode] = useState(false);
+  const [bulkKeys, setBulkKeys] = useState("");
   const [loading, setLoading] = useState(false);
 
   const addMut = useMutation({
@@ -706,6 +708,44 @@ function KeysManager({ providerId, keys }: { providerId: string; keys: KeyItem[]
       setNewName("");
       setAdding(false);
       toast.success("تمت إضافة المفتاح");
+    },
+    onError: (e) => toast.error((e as Error).message),
+  });
+
+  const addBulkMut = useMutation({
+    mutationFn: async () => {
+      // Split by newlines, commas, or spaces; trim; deduplicate; drop empties
+      const list = Array.from(
+        new Set(
+          bulkKeys
+            .split(/[\n,\s]+/)
+            .map((k) => k.trim())
+            .filter(Boolean)
+        )
+      );
+      let ok = 0;
+      let fail = 0;
+      for (const k of list) {
+        try {
+          await api.post(`/api/providers/${providerId}/keys`, { key: k });
+          ok++;
+        } catch {
+          fail++;
+        }
+      }
+      return { ok, fail, total: list.length };
+    },
+    onSuccess: ({ ok, fail, total }) => {
+      qc.invalidateQueries({ queryKey: ["provider", providerId] });
+      qc.invalidateQueries({ queryKey: ["providers"] });
+      qc.invalidateQueries({ queryKey: ["stats"] });
+      setBulkKeys("");
+      setAdding(false);
+      if (fail === 0) {
+        toast.success(`تمت إضافة ${ok} مفتاح بنجاح`);
+      } else {
+        toast.success(`تمت إضافة ${ok} من ${total} مفتاح${fail > 0 ? ` (${fail} فشل)` : ""}`);
+      }
     },
     onError: (e) => toast.error((e as Error).message),
   });
@@ -781,7 +821,7 @@ function KeysManager({ providerId, keys }: { providerId: string; keys: KeyItem[]
               إعادة تفعيل الكل
             </Button>
           )}
-          <Button size="sm" onClick={() => setAdding((v) => !v)}>
+          <Button size="sm" onClick={() => { setAdding((v) => !v); setBulkMode(false); }}>
             <Plus className="w-4 h-4 ml-1" />
             إضافة مفتاح
           </Button>
@@ -791,44 +831,101 @@ function KeysManager({ providerId, keys }: { providerId: string; keys: KeyItem[]
       {adding && (
         <Card>
           <CardContent className="p-4 space-y-3">
-            <div className="space-y-2">
-              <Label>مفتاح API *</Label>
-              <Input
-                value={newKey}
-                onChange={(e) => setNewKey(e.target.value)}
-                placeholder="sk-..."
-                dir="ltr"
-                className="font-mono"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>اسم تعريفي (اختياري)</Label>
-              <Input
-                value={newName}
-                onChange={(e) => setNewName(e.target.value)}
-                placeholder="الحساب الأساسي"
-              />
-            </div>
-            <div className="flex gap-2">
+            {/* Toggle between single and bulk modes */}
+            <div className="flex gap-2 border-b pb-3">
               <Button
                 size="sm"
-                disabled={!newKey.trim() || loading}
-                onClick={async () => {
-                  setLoading(true);
-                  try {
-                    await addMut.mutateAsync();
-                  } finally {
-                    setLoading(false);
-                  }
-                }}
+                variant={!bulkMode ? "default" : "outline"}
+                onClick={() => setBulkMode(false)}
               >
-                {loading && <Loader2 className="w-4 h-4 ml-1 animate-spin" />}
-                حفظ
+                مفتاح واحد
               </Button>
-              <Button size="sm" variant="outline" onClick={() => setAdding(false)}>
-                إلغاء
+              <Button
+                size="sm"
+                variant={bulkMode ? "default" : "outline"}
+                onClick={() => setBulkMode(true)}
+              >
+                مفاتيح متعددة
               </Button>
             </div>
+
+            {!bulkMode ? (
+              <>
+                <div className="space-y-2">
+                  <Label>مفتاح API *</Label>
+                  <Input
+                    value={newKey}
+                    onChange={(e) => setNewKey(e.target.value)}
+                    placeholder="sk-..."
+                    dir="ltr"
+                    className="font-mono"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>اسم تعريفي (اختياري)</Label>
+                  <Input
+                    value={newName}
+                    onChange={(e) => setNewName(e.target.value)}
+                    placeholder="الحساب الأساسي"
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    disabled={!newKey.trim() || loading}
+                    onClick={async () => {
+                      setLoading(true);
+                      try {
+                        await addMut.mutateAsync();
+                      } finally {
+                        setLoading(false);
+                      }
+                    }}
+                  >
+                    {loading && <Loader2 className="w-4 h-4 ml-1 animate-spin" />}
+                    حفظ
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => setAdding(false)}>
+                    إلغاء
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="space-y-2">
+                  <Label>المفاتيح *</Label>
+                  <Textarea
+                    value={bulkKeys}
+                    onChange={(e) => setBulkKeys(e.target.value)}
+                    placeholder={"ضع كل مفتاح في سطر منفصل:\nsk-aaa...\nsk-bbb...\nsk-ccc..."}
+                    dir="ltr"
+                    className="font-mono text-sm min-h-[120px]"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    يمكنك لصق المفاتيح مفصولة بأسطر جديدة، فواصل، أو مسافات.
+                    سيتم إزالة التكرار تلقائياً.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    disabled={!bulkKeys.trim() || addBulkMut.isPending}
+                    onClick={() => addBulkMut.mutate()}
+                  >
+                    {addBulkMut.isPending && <Loader2 className="w-4 h-4 ml-1 animate-spin" />}
+                    إضافة المفاتيح
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => setAdding(false)}>
+                    إلغاء
+                  </Button>
+                  {bulkKeys.trim() && (
+                    <span className="text-xs text-muted-foreground">
+                      {Array.from(new Set(bulkKeys.split(/[\n,\s]+/).map(k=>k.trim()).filter(Boolean))).length} مفتاح جاهز
+                    </span>
+                  )}
+                </div>
+              </>
+            )}
           </CardContent>
         </Card>
       )}
