@@ -42,6 +42,36 @@ interface ResponsesRequestBody {
 }
 
 /**
+ * Convert a Chat Completions content part to a Responses API content part.
+ *
+ * Chat Completions uses: {type: "text", text: "..."}
+ *                      {type: "image_url", image_url: {url: "..."}}
+ * Responses API uses:  {type: "input_text", text: "..."}
+ *                      {type: "input_image", image_url: "..."}
+ */
+function convertContentPart(part: unknown): unknown {
+  if (typeof part === "string") return { type: "input_text", text: part };
+  if (!part || typeof part !== "object") return part;
+  const p = part as Record<string, unknown>;
+  switch (p.type) {
+    case "text":
+      return { type: "input_text", text: p.text ?? "" };
+    case "image_url":
+      // Chat: {type:"image_url", image_url:{url:"..."}} → Responses: {type:"input_image", image_url:"..."}
+      return {
+        type: "input_image",
+        image_url: typeof p.image_url === "string" ? p.image_url : (p.image_url as Record<string,unknown>)?.url ?? "",
+      };
+    case "input_text":
+    case "input_image":
+    case "output_text":
+      return p; // already Responses format
+    default:
+      return p;
+  }
+}
+
+/**
  * Convert a Chat Completions request body to a Responses API request body.
  *
  * The Responses API "input" field can be:
@@ -49,6 +79,8 @@ interface ResponsesRequestBody {
  *   - An array of message objects [{role, content}]
  *
  * We use the array form to preserve conversation history and roles.
+ * Content parts are converted from Chat format (type:"text") to Responses
+ * format (type:"input_text").
  */
 export function chatToResponsesRequest(body: unknown): unknown {
   if (!body || typeof body !== "object") return body;
@@ -57,12 +89,16 @@ export function chatToResponsesRequest(body: unknown): unknown {
   // Convert messages to Responses input format
   let input: unknown = "";
   if (src.messages && Array.isArray(src.messages)) {
-    // Responses API input items: each has role + content
     input = src.messages.map((m) => {
-      // Responses API expects content as a string or array of content parts.
-      // Pass through as-is; string content works directly.
       const role = m.role === "assistant" ? "assistant" : m.role === "system" ? "developer" : "user";
-      return { role, content: m.content ?? "" };
+      let content = m.content ?? "";
+      // If content is an array of parts, convert each part to Responses format
+      if (Array.isArray(content)) {
+        content = content.map(convertContentPart);
+      } else if (typeof content === "string") {
+        // string content stays as string (Responses API accepts it)
+      }
+      return { role, content };
     });
   }
 
@@ -71,20 +107,8 @@ export function chatToResponsesRequest(body: unknown): unknown {
     input,
   };
 
-  // Map optional fields — ONLY fields the Responses API supports.
-  // Many Chat Completions fields (temperature, top_p, frequency_penalty,
-  // presence_penalty, logit_bias, n, stop) are NOT supported by some
-  // Responses API models (e.g. gpt-5.6-sol). We only pass fields that are
-  // explicitly supported to avoid 400 errors.
   if (typeof src.max_tokens === "number") out.max_output_tokens = src.max_tokens;
   if (typeof src.stream === "boolean") out.stream = src.stream;
-  // Only pass temperature/top_p if explicitly set — many reasoning models
-  // reject them. We wrap in try-by-model: if the model rejects them, the
-  // gateway's retry logic won't help (it's a 400 = client_error = ignore).
-  // So we OMIT them entirely by default to be safe.
-  // If you need them, you can re-enable these lines:
-  // if (typeof src.temperature === "number") out.temperature = src.temperature;
-  // if (typeof src.top_p === "number") out.top_p = src.top_p;
 
   return out;
 }
