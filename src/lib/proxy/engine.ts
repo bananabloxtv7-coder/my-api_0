@@ -6,6 +6,10 @@ import {
   openaiToAnthropicRequest,
   anthropicToOpenAIResponse,
 } from "./translate";
+import {
+  chatToResponsesRequest,
+  responsesToChatResponse,
+} from "./responses-translate";
 import { getCachedProviders, markKeyStateInCache, resetProviderKeysInCache, markKeyInFlight, clearKeyInFlight, isKeyInFlight, type CachedProvider, type CachedKey } from "./cache";
 
 export interface ProxyResult {
@@ -122,8 +126,11 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
   const providers = await getCachedProviders(userId);
 
   // Only consider providers that have an endpoint of the requested type.
+  // ALSO include providers with protocol="responses" that have a 'responses'
+  // endpoint (they serve chat requests via translation).
   const withEndpoint = providers.filter((p) =>
-    p.endpoints.some((e) => e.type === detected.type)
+    p.endpoints.some((e) => e.type === detected.type) ||
+    (p.protocol === "responses" && p.endpoints.some((e) => e.type === "responses"))
   );
 
   // Filter by model support: a provider matches if it lists the model OR has
@@ -161,7 +168,14 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
   for (let pass = 0; pass < 3; pass++) {
     const now = Date.now();
   for (const provider of candidates) {
-    const endpoint = provider.endpoints.find((e) => e.type === detected.type);
+    // Determine which endpoint to use. If the provider speaks the Responses
+    // protocol, always use its 'responses' endpoint (the gateway converts
+    // chat completions → responses transparently). Otherwise use the endpoint
+    // matching the client's requested type.
+    let endpoint = provider.endpoints.find((e) => e.type === detected.type);
+    if (provider.protocol === "responses") {
+      endpoint = provider.endpoints.find((e) => e.type === "responses") || endpoint;
+    }
     if (!endpoint) continue;
 
     // On pass > 0, force-recover ALL non-disabled keys to 'active' so we
@@ -256,6 +270,7 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
 
       // ── Protocol translation (optional) ──
       const isAnthropicProvider = provider.protocol === "anthropic";
+      const isResponsesProvider = provider.protocol === "responses";
       if (bodyBuffer && method !== "GET" && method !== "HEAD") {
         if (isAnthropicProvider && bodyJson) {
           const translated = openaiToAnthropicRequest(bodyJson);
@@ -263,6 +278,10 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
           if (!fwdHeaders.has("anthropic-version")) {
             fwdHeaders.set("anthropic-version", "2023-06-01");
           }
+        } else if (isResponsesProvider && bodyJson) {
+          // Convert Chat Completions (messages) → Responses API (input)
+          const translated = chatToResponsesRequest(bodyJson);
+          init.body = JSON.stringify(translated);
         } else {
           init.body = bodyBuffer;
         }
@@ -375,6 +394,19 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
               headers: respHeaders,
             });
           }
+        }
+
+        // ── Protocol translation: Responses API → Chat Completions ──
+        if (isResponsesProvider) {
+          const respText = await upstream.text();
+          const respJson = safeParseJson(respText);
+          const translated = responsesToChatResponse(respJson);
+          respHeaders.set("content-type", "application/json");
+          return new Response(JSON.stringify(translated), {
+            status,
+            statusText: upstream.statusText,
+            headers: respHeaders,
+          });
         }
 
         return new Response(upstream.body, {

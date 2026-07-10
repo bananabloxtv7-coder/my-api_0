@@ -54,10 +54,12 @@ model Provider {
   baseUrl   String
   authHeader String  @default("Authorization") // header used to send provider key
   authScheme String  @default("bearer") // bearer | raw | x-api-key
-  // Protocol translation: transparent (pass-through, default) | anthropic
-  // (convert OpenAI-style request bodies to Anthropic-style before forwarding,
-  // and convert the Anthropic response back to OpenAI style). Use "anthropic"
-  // for providers that speak the Anthropic Messages API (claude-* models).
+  // Protocol translation: transparent (pass-through, default) | anthropic | responses
+  // - transparent: pass-through, no conversion
+  // - anthropic: convert OpenAI → Anthropic Messages API and back
+  // - responses: convert OpenAI Chat Completions → Responses API (/v1/responses)
+  //   and convert the Responses output back to Chat Completions format.
+  //   Use for models like gpt-5.6-sol that only work with the Responses API.
   protocol  String   @default("transparent")
   isActive  Boolean  @default(true)
   priority  Int      @default(0) // higher = preferred when multiple providers support a model

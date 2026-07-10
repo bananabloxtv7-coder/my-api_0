@@ -123,6 +123,7 @@ const AUTH_SCHEMES = [
 const PROTOCOLS = [
   { value: "transparent", label: "شفاف (Transparent) — لا تحويل" },
   { value: "anthropic", label: "Anthropic — تحويل OpenAI → Claude تلقائياً" },
+  { value: "responses", label: "Responses — تحويل Chat → Responses API (gpt-5.6-sol)" },
 ];
 
 // ───────────────────────── Main Panel ─────────────────────────
