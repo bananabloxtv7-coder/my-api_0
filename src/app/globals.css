@@ -43,73 +43,98 @@
   --radius-xl: calc(var(--radius) + 4px);
 }
 
+/* ─────────────────────────────────────────────────────────────
+   DARK NAVY THEME — default & only theme.
+   The .dark class is applied to <html> in layout.tsx and forced
+   by next-themes, so these values are always active. The :root
+   block holds the same palette so the UI is dark even before
+   the theme provider hydrates.
+   ───────────────────────────────────────────────────────────── */
 :root {
-  --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.646 0.222 41.116);
-  --chart-2: oklch(0.6 0.118 184.704);
-  --chart-3: oklch(0.398 0.07 227.392);
-  --chart-4: oklch(0.828 0.189 84.429);
-  --chart-5: oklch(0.769 0.188 70.08);
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --radius: 0.75rem;
+
+  /* Surfaces */
+  --background: #0a0b14;            /* very dark navy */
+  --foreground: #ffffff;            /* white */
+  --card: #1a1c2e;                  /* dark blue card */
+  --card-foreground: #ffffff;
+  --popover: #12131f;               /* dark blue popover */
+  --popover-foreground: #ffffff;
+
+  /* Brand */
+  --primary: #7c3aed;               /* purple */
+  --primary-foreground: #ffffff;
+  --secondary: #1a1c2e;
+  --secondary-foreground: #ffffff;
+  --accent: #6366f1;                /* indigo accent */
+  --accent-foreground: #ffffff;
+
+  /* Muted / secondary text */
+  --muted: #12131f;
+  --muted-foreground: #9ca3af;      /* gray */
+
+  /* Semantic */
+  --destructive: #ef4444;
+  --success: #10b981;
+  --warning: #f59e0b;
+  --border: rgba(255, 255, 255, 0.08);
+  --input: rgba(255, 255, 255, 0.10);
+  --ring: #7c3aed;
+
+  /* Chart palette */
+  --chart-1: #7c3aed;               /* purple */
+  --chart-2: #10b981;               /* green */
+  --chart-3: #f59e0b;               /* orange */
+  --chart-4: #6366f1;               /* indigo */
+  --chart-5: #ef4444;               /* red */
+
+  /* Sidebar */
+  --sidebar: #12131f;               /* dark blue sidebar */
+  --sidebar-foreground: #ffffff;
+  --sidebar-primary: #7c3aed;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #1a1c2e;
+  --sidebar-accent-foreground: #ffffff;
+  --sidebar-border: rgba(255, 255, 255, 0.08);
+  --sidebar-ring: #7c3aed;
 }
 
+/* Mirror the same palette under .dark so next-themes' forced
+   dark class resolves to identical values. */
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  --background: #0a0b14;
+  --foreground: #ffffff;
+  --card: #1a1c2e;
+  --card-foreground: #ffffff;
+  --popover: #12131f;
+  --popover-foreground: #ffffff;
+  --primary: #7c3aed;
+  --primary-foreground: #ffffff;
+  --secondary: #1a1c2e;
+  --secondary-foreground: #ffffff;
+  --accent: #6366f1;
+  --accent-foreground: #ffffff;
+  --muted: #12131f;
+  --muted-foreground: #9ca3af;
+  --destructive: #ef4444;
+  --success: #10b981;
+  --warning: #f59e0b;
+  --border: rgba(255, 255, 255, 0.08);
+  --input: rgba(255, 255, 255, 0.10);
+  --ring: #7c3aed;
+  --chart-1: #7c3aed;
+  --chart-2: #10b981;
+  --chart-3: #f59e0b;
+  --chart-4: #6366f1;
+  --chart-5: #ef4444;
+  --sidebar: #12131f;
+  --sidebar-foreground: #ffffff;
+  --sidebar-primary: #7c3aed;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #1a1c2e;
+  --sidebar-accent-foreground: #ffffff;
+  --sidebar-border: rgba(255, 255, 255, 0.08);
+  --sidebar-ring: #7c3aed;
 }
 
 @layer base {
@@ -118,5 +143,25 @@
   }
   body {
     @apply bg-background text-foreground;
+    /* Subtle ambient grid for depth on the dark canvas */
+    background-image:
+      radial-gradient(circle at 20% 0%, rgba(124, 58, 237, 0.08), transparent 40%),
+      radial-gradient(circle at 80% 100%, rgba(99, 102, 241, 0.06), transparent 45%);
+    background-attachment: fixed;
+  }
+  /* Custom scrollbar tuned for the dark theme */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 9999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.2);
   }
 }

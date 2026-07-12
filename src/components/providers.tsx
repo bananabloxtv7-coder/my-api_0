@@ -22,7 +22,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
     <ThemeProvider
       attribute="class"
       defaultTheme="dark"
-      enableSystem
+      forcedTheme="dark"
       disableTransitionOnChange
     >
       <QueryClientProvider client={client}>{children}</QueryClientProvider>

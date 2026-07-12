@@ -1,0 +1,1331 @@
+     1→"use client";
+     2→
+     3→import { useState } from "react";
+     4→import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+     5→import { api, ApiError } from "@/lib/api-client";
+     6→import {
+     7→  Card,
+     8→  CardContent,
+     9→  CardHeader,
+    10→  CardTitle,
+    11→} from "@/components/ui/card";
+    12→import { Button } from "@/components/ui/button";
+    13→import { Input } from "@/components/ui/input";
+    14→import { Label } from "@/components/ui/label";
+    15→import { Textarea } from "@/components/ui/textarea";
+    16→import { Badge } from "@/components/ui/badge";
+    17→import {
+    18→  Dialog,
+    19→  DialogContent,
+    20→  DialogHeader,
+    21→  DialogTitle,
+    22→  DialogFooter,
+    23→  DialogDescription,
+    24→} from "@/components/ui/dialog";
+    25→import {
+    26→  Sheet,
+    27→  SheetContent,
+    28→  SheetHeader,
+    29→  SheetTitle,
+    30→} from "@/components/ui/sheet";
+    31→import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+    32→import {
+    33→  Select,
+    34→  SelectContent,
+    35→  SelectItem,
+    36→  SelectTrigger,
+    37→  SelectValue,
+    38→} from "@/components/ui/select";
+    39→import {
+    40→  DropdownMenu,
+    41→  DropdownMenuContent,
+    42→  DropdownMenuItem,
+    43→  DropdownMenuSeparator,
+    44→  DropdownMenuTrigger,
+    45→} from "@/components/ui/dropdown-menu";
+    46→import { Switch } from "@/components/ui/switch";
+    47→import { ScrollArea } from "@/components/ui/scroll-area";
+    48→import {
+    49→  Plus,
+    50→  Server,
+    51→  MoreVertical,
+    52→  Trash2,
+    53→  Pencil,
+    54→  KeyRound,
+    55→  Route,
+    56→  Cpu,
+    57→  ExternalLink,
+    58→  RefreshCw,
+    59→  Power,
+    60→  Copy,
+    61→  Loader2,
+    62→  CheckCircle2,
+    63→  AlertCircle,
+    64→  Clock,
+    65→} from "lucide-react";
+    66→import { toast } from "sonner";
+    67→
+    68→// ───────────────────────── Types ─────────────────────────
+    69→
+    70→interface ProviderListItem {
+    71→  id: string;
+    72→  name: string;
+    73→  baseUrl: string;
+    74→  isActive: boolean;
+    75→  priority: number;
+    76→  authHeader: string;
+    77→  authScheme: string;
+    78→  protocol: string;
+    79→  _count: { apiKeys: number; endpoints: number; models: number };
+    80→  endpoints: Array<{ id: string; type: string; path: string; method: string }>;
+    81→}
+    82→
+    83→interface ProviderDetail extends ProviderListItem {
+    84→  models: Array<{ id: string; name: string }>;
+    85→  keys: Array<KeyItem>;
+    86→}
+    87→
+    88→interface KeyItem {
+    89→  id: string;
+    90→  name: string | null;
+    91→  keyPreview: string;
+    92→  isActive: boolean;
+    93→  status: string;
+    94→  lastError: string | null;
+    95→  lastErrorAt: string | null;
+    96→  lastUsedAt: string | null;
+    97→  cooldownUntil: string | null;
+    98→  totalRequests: number;
+    99→  totalErrors: number;
+   100→  totalSuccess: number;
+   101→  createdAt: string;
+   102→}
+   103→
+   104→// ───────────────────────── Presets ─────────────────────────
+   105→
+   106→const ENDPOINT_PRESETS: Array<{ type: string; path: string }> = [
+   107→  { type: "chat", path: "/v1/chat/completions" },
+   108→  { type: "models", path: "/v1/models" },
+   109→  { type: "embeddings", path: "/v1/embeddings" },
+   110→  { type: "images", path: "/v1/images/generations" },
+   111→  { type: "audio", path: "/v1/audio/speech" },
+   112→  { type: "responses", path: "/v1/responses" },
+   113→  { type: "rerank", path: "/v1/rerank" },
+   114→  { type: "moderation", path: "/v1/moderations" },
+   115→];
+   116→
+   117→const AUTH_SCHEMES = [
+   118→  { value: "bearer", label: "Bearer Token (Authorization: Bearer …)" },
+   119→  { value: "x-api-key", label: "X-API-Key header" },
+   120→  { value: "raw", label: "Raw value in custom header" },
+   121→];
+   122→
+   123→const PROTOCOLS = [
+   124→  { value: "transparent", label: "شفاف (Transparent) — لا تحويل" },
+   125→  { value: "anthropic", label: "Anthropic — تحويل OpenAI → Claude تلقائياً" },
+   126→  { value: "responses", label: "Responses — تحويل Chat → Responses API (gpt-5.6-sol)" },
+   127→];
+   128→
+   129→// ───────────────────────── Main Panel ─────────────────────────
+   130→
+   131→export function ProvidersPanel() {
+   132→  const qc = useQueryClient();
+   133→  const [addOpen, setAddOpen] = useState(false);
+   134→  const [editing, setEditing] = useState<ProviderListItem | null>(null);
+   135→  const [detailId, setDetailId] = useState<string | null>(null);
+   136→
+   137→  const { data, isLoading } = useQuery<{ providers: ProviderListItem[] }>({
+   138→    queryKey: ["providers"],
+   139→    queryFn: () => api.get("/api/providers"),
+   140→  });
+   141→
+   142→  const delMut = useMutation({
+   143→    mutationFn: (id: string) => api.del(`/api/providers/${id}`),
+   144→    onSuccess: () => {
+   145→      qc.invalidateQueries({ queryKey: ["providers"] });
+   146→      qc.invalidateQueries({ queryKey: ["stats"] });
+   147→      toast.success("تم حذف المزود");
+   148→    },
+   149→    onError: (e) => toast.error((e as Error).message),
+   150→  });
+   151→
+   152→  return (
+   153→    <div className="space-y-6">
+   154→      <div className="flex items-center justify-between gap-3 flex-wrap">
+   155→        <div>
+   156→          <h1 className="text-2xl font-bold">المزودون</h1>
+   157→          <p className="text-muted-foreground text-sm">
+   158→            أضف عددًا غير محدود من المزودين والمفاتيح والـ Endpoints
+   159→          </p>
+   160→        </div>
+   161→        <Button onClick={() => setAddOpen(true)}>
+   162→          <Plus className="w-4 h-4 ml-2" />
+   163→          إضافة مزود
+   164→        </Button>
+   165→      </div>
+   166→
+   167→      {isLoading ? (
+   168→        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+   169→          {Array.from({ length: 3 }).map((_, i) => (
+   170→            <Card key={i} className="animate-pulse">
+   171→              <CardContent className="h-40" />
+   172→            </Card>
+   173→          ))}
+   174→        </div>
+   175→      ) : !data?.providers?.length ? (
+   176→        <Card>
+   177→          <CardContent className="py-16 flex flex-col items-center justify-center gap-3 text-center">
+   178→            <div className="w-14 h-14 rounded-2xl bg-muted flex items-center justify-center">
+   179→              <Server className="w-7 h-7 text-muted-foreground" />
+   180→            </div>
+   181→            <div className="font-semibold">لا يوجد مزودون بعد</div>
+   182→            <p className="text-sm text-muted-foreground max-w-sm">
+   183→              ابدأ بإضافة مزود الخدمة الأول (مثل OpenAI, Anthropic, Google…) مع
+   184→              عنوانه الأساسي ومساراته.
+   185→            </p>
+   186→            <Button onClick={() => setAddOpen(true)} className="mt-2">
+   187→              <Plus className="w-4 h-4 ml-2" />
+   188→              إضافة مزود
+   189→            </Button>
+   190→          </CardContent>
+   191→        </Card>
+   192→      ) : (
+   193→        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+   194→          {data.providers.map((p) => (
+   195→            <ProviderCard
+   196→              key={p.id}
+   197→              provider={p}
+   198→              onOpen={() => setDetailId(p.id)}
+   199→              onEdit={() => setEditing(p)}
+   200→              onDelete={() => {
+   201→                if (confirm(`حذف المزود "${p.name}" وكل مفاتيحه؟`)) {
+   202→                  delMut.mutate(p.id);
+   203→                }
+   204→              }}
+   205→            />
+   206→          ))}
+   207→        </div>
+   208→      )}
+   209→
+   210→      <ProviderFormDialog
+   211→        open={addOpen}
+   212→        onOpenChange={setAddOpen}
+   213→        editing={null}
+   214→      />
+   215→      <ProviderFormDialog
+   216→        open={!!editing}
+   217→        onOpenChange={(o) => !o && setEditing(null)}
+   218→        editing={editing}
+   219→      />
+   220→
+   221→      <ProviderDetailSheet
+   222→        providerId={detailId}
+   223→        onOpenChange={(o) => !o && setDetailId(null)}
+   224→      />
+   225→    </div>
+   226→  );
+   227→}
+   228→
+   229→// ───────────────────────── Provider Card ─────────────────────────
+   230→
+   231→function ProviderCard({
+   232→  provider,
+   233→  onOpen,
+   234→  onEdit,
+   235→  onDelete,
+   236→}: {
+   237→  provider: ProviderListItem;
+   238→  onOpen: () => void;
+   239→  onEdit: () => void;
+   240→  onDelete: () => void;
+   241→}) {
+   242→  return (
+   243→    <Card className="overflow-hidden hover:shadow-md transition-shadow">
+   244→      <CardHeader className="pb-3">
+   245→        <div className="flex items-start justify-between gap-2">
+   246→          <div className="flex items-center gap-2 min-w-0">
+   247→            <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-emerald-500 to-teal-600 text-white flex items-center justify-center shrink-0">
+   248→              <Server className="w-4 h-4" />
+   249→            </div>
+   250→            <div className="min-w-0">
+   251→              <CardTitle className="text-base truncate">{provider.name}</CardTitle>
+   252→              <div className="text-xs text-muted-foreground truncate" dir="ltr">
+   253→                {provider.baseUrl}
+   254→              </div>
+   255→            </div>
+   256→          </div>
+   257→          <DropdownMenu>
+   258→            <DropdownMenuTrigger asChild>
+   259→              <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0">
+   260→                <MoreVertical className="w-4 h-4" />
+   261→              </Button>
+   262→            </DropdownMenuTrigger>
+   263→            <DropdownMenuContent align="start">
+   264→              <DropdownMenuItem onClick={onOpen}>
+   265→                <ExternalLink className="w-4 h-4 ml-2" />
+   266→                إدارة التفاصيل
+   267→              </DropdownMenuItem>
+   268→              <DropdownMenuItem onClick={onEdit}>
+   269→                <Pencil className="w-4 h-4 ml-2" />
+   270→                تعديل
+   271→              </DropdownMenuItem>
+   272→              <DropdownMenuSeparator />
+   273→              <DropdownMenuItem onClick={onDelete} className="text-destructive focus:text-destructive">
+   274→                <Trash2 className="w-4 h-4 ml-2" />
+   275→                حذف
+   276→              </DropdownMenuItem>
+   277→            </DropdownMenuContent>
+   278→          </DropdownMenu>
+   279→        </div>
+   280→      </CardHeader>
+   281→      <CardContent className="space-y-3">
+   282→        <div className="flex items-center gap-2 flex-wrap">
+   283→          {provider.isActive ? (
+   284→            <Badge className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/15">
+   285→              <CheckCircle2 className="w-3 h-3 ml-1" />
+   286→              نشط
+   287→            </Badge>
+   288→          ) : (
+   289→            <Badge variant="secondary">معطّل</Badge>
+   290→          )}
+   291→          <Badge variant="outline" className="font-mono">
+   292→            {provider.authScheme}
+   293→          </Badge>
+   294→          {provider.protocol === "anthropic" && (
+   295→            <Badge className="bg-violet-500/15 text-violet-600 dark:text-violet-400 hover:bg-violet-500/15">
+   296→              Anthropic
+   297→            </Badge>
+   298→          )}
+   299→        </div>
+   300→        <div className="grid grid-cols-3 gap-2 text-center">
+   301→          <Stat icon={<KeyRound className="w-3.5 h-3.5" />} value={provider._count.apiKeys} label="مفاتيح" />
+   302→          <Stat icon={<Route className="w-3.5 h-3.5" />} value={provider._count.endpoints} label="مسارات" />
+   303→          <Stat icon={<Cpu className="w-3.5 h-3.5" />} value={provider._count.models} label="نماذج" />
+   304→        </div>
+   305→        <Button variant="outline" className="w-full" onClick={onOpen}>
+   306→          إدارة المفاتيح والمسارات
+   307→          <ExternalLink className="w-4 h-4 mr-2" />
+   308→        </Button>
+   309→      </CardContent>
+   310→    </Card>
+   311→  );
+   312→}
+   313→
+   314→function Stat({ icon, value, label }: { icon: React.ReactNode; value: number; label: string }) {
+   315→  return (
+   316→    <div className="rounded-lg bg-muted/50 p-2">
+   317→      <div className="flex items-center justify-center gap-1 text-muted-foreground">
+   318→        {icon}
+   319→      </div>
+   320→      <div className="font-bold text-lg leading-tight">{value}</div>
+   321→      <div className="text-[10px] text-muted-foreground">{label}</div>
+   322→    </div>
+   323→  );
+   324→}
+   325→
+   326→// ───────────────────────── Provider Form (Add/Edit) ─────────────────────────
+   327→
+   328→function ProviderFormDialog({
+   329→  open,
+   330→  onOpenChange,
+   331→  editing,
+   332→}: {
+   333→  open: boolean;
+   334→  onOpenChange: (o: boolean) => void;
+   335→  editing: ProviderListItem | null;
+   336→}) {
+   337→  const qc = useQueryClient();
+   338→  const [name, setName] = useState("");
+   339→  const [baseUrl, setBaseUrl] = useState("");
+   340→  const [authScheme, setAuthScheme] = useState("bearer");
+   341→  const [authHeader, setAuthHeader] = useState("Authorization");
+   342→  const [protocol, setProtocol] = useState("transparent");
+   343→  const [priority, setPriority] = useState("0");
+   344→  const [endpoints, setEndpoints] = useState<Array<{ type: string; path: string }>>(ENDPOINT_PRESETS);
+   345→  const [modelsText, setModelsText] = useState("");
+   346→  const [loading, setLoading] = useState(false);
+   347→
+   348→  // Sync when opening
+   349→  const lastEditingId = useState(editing?.id)[0];
+   350→  if (open && editing && editing.id !== lastEditingId && lastEditingId !== undefined) {
+   351→    // noop; values are set below
+   352→  }
+   353→
+   354→  function resetForm() {
+   355→    setName("");
+   356→    setBaseUrl("");
+   357→    setAuthScheme("bearer");
+   358→    setAuthHeader("Authorization");
+   359→    setProtocol("transparent");
+   360→    setPriority("0");
+   361→    setEndpoints(ENDPOINT_PRESETS);
+   362→    setModelsText("");
+   363→  }
+   364→
+   365→  function prepareForEdit() {
+   366→    if (editing) {
+   367→      setName(editing.name);
+   368→      setBaseUrl(editing.baseUrl);
+   369→      setAuthScheme(editing.authScheme);
+   370→      setAuthHeader(editing.authHeader);
+   371→      setProtocol(editing.protocol || "transparent");
+   372→      setPriority(String(editing.priority));
+   373→      setEndpoints(
+   374→        editing.endpoints.length > 0
+   375→          ? editing.endpoints.map((e) => ({ type: e.type, path: e.path }))
+   376→          : ENDPOINT_PRESETS
+   377→      );
+   378→      setModelsText("");
+   379→    } else {
+   380→      resetForm();
+   381→    }
+   382→  }
+   383→
+   384→  async function handleSubmit() {
+   385→    if (!name.trim() || !baseUrl.trim()) {
+   386→      toast.error("الاسم وعنوان URL مطلوبان");
+   387→      return;
+   388→    }
+   389→    setLoading(true);
+   390→    try {
+   391→      const models = modelsText
+   392→        .split(/[\n,]/)
+   393→        .map((m) => m.trim())
+   394→        .filter(Boolean);
+   395→      if (editing) {
+   396→        await api.patch(`/api/providers/${editing.id}`, {
+   397→          name: name.trim(),
+   398→          baseUrl: baseUrl.trim(),
+   399→          authScheme,
+   400→          authHeader,
+   401→          protocol,
+   402→          priority: parseInt(priority) || 0,
+   403→        });
+   404→        toast.success("تم تحديث المزود");
+   405→      } else {
+   406→        await api.post("/api/providers", {
+   407→          name: name.trim(),
+   408→          baseUrl: baseUrl.trim(),
+   409→          authScheme,
+   410→          authHeader,
+   411→          protocol,
+   412→          priority: parseInt(priority) || 0,
+   413→          endpoints,
+   414→          models,
+   415→        });
+   416→        toast.success("تمت إضافة المزود");
+   417→      }
+   418→      qc.invalidateQueries({ queryKey: ["providers"] });
+   419→      qc.invalidateQueries({ queryKey: ["stats"] });
+   420→      onOpenChange(false);
+   421→      if (!editing) resetForm();
+   422→    } catch (e) {
+   423→      toast.error((e as Error).message);
+   424→    } finally {
+   425→      setLoading(false);
+   426→    }
+   427→  }
+   428→
+   429→  return (
+   430→    <Dialog
+   431→      open={open}
+   432→      onOpenChange={(o) => {
+   433→        if (o) prepareForEdit();
+   434→        onOpenChange(o);
+   435→      }}
+   436→    >
+   437→      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+   438→        <DialogHeader>
+   439→          <DialogTitle>{editing ? "تعديل المزود" : "إضافة مزود جديد"}</DialogTitle>
+   440→          <DialogDescription>
+   441→            {editing
+   442→              ? "عدّل بيانات المزود. تُدار المسارات والنماذج من شاشة التفاصيل."
+   443→              : "أدخل بيانات المزود. سيتم إعداد المسارات الشائعة تلقائيًا ويمكنك تعديلها لاحقًا."}
+   444→          </DialogDescription>
+   445→        </DialogHeader>
+   446→
+   447→        <div className="space-y-4 py-2">
+   448→          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+   449→            <div className="space-y-2">
+   450→              <Label>اسم المزود *</Label>
+   451→              <Input
+   452→                value={name}
+   453→                onChange={(e) => setName(e.target.value)}
+   454→                placeholder="مثال: OpenAI"
+   455→              />
+   456→            </div>
+   457→            <div className="space-y-2">
+   458→              <Label>الأولوية</Label>
+   459→              <Input
+   460→                type="number"
+   461→                value={priority}
+   462→                onChange={(e) => setPriority(e.target.value)}
+   463→                placeholder="0"
+   464→                dir="ltr"
+   465→              />
+   466→              <p className="text-xs text-muted-foreground">
+   467→                الأعلى يُفضّل عند توفّر عدة مزودين للنموذج نفسه
+   468→              </p>
+   469→            </div>
+   470→          </div>
+   471→
+   472→          <div className="space-y-2">
+   473→            <Label>عنوان URL الأساسي *</Label>
+   474→            <Input
+   475→              value={baseUrl}
+   476→              onChange={(e) => setBaseUrl(e.target.value)}
+   477→              placeholder="https://api.openai.com"
+   478→              dir="ltr"
+   479→            />
+   480→          </div>
+   481→
+   482→          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+   483→            <div className="space-y-2">
+   484→              <Label>طريقة المصادقة</Label>
+   485→              <Select value={authScheme} onValueChange={setAuthScheme}>
+   486→                <SelectTrigger>
+   487→                  <SelectValue />
+   488→                </SelectTrigger>
+   489→                <SelectContent>
+   490→                  {AUTH_SCHEMES.map((s) => (
+   491→                    <SelectItem key={s.value} value={s.value}>
+   492→                      {s.label}
+   493→                    </SelectItem>
+   494→                  ))}
+   495→                </SelectContent>
+   496→              </Select>
+   497→            </div>
+   498→            <div className="space-y-2">
+   499→              <Label>اسم الترويسة (Header)</Label>
+   500→              <Input
+   501→                value={authHeader}
+   502→                onChange={(e) => setAuthHeader(e.target.value)}
+   503→                dir="ltr"
+   504→              />
+   505→            </div>
+   506→          </div>
+   507→
+   508→          <div className="space-y-2">
+   509→            <Label>البروتوكول (Protocol Translation)</Label>
+   510→            <Select value={protocol} onValueChange={setProtocol}>
+   511→              <SelectTrigger>
+   512→                <SelectValue />
+   513→              </SelectTrigger>
+   514→              <SelectContent>
+   515→                {PROTOCOLS.map((p) => (
+   516→                  <SelectItem key={p.value} value={p.value}>
+   517→                    {p.label}
+   518→                  </SelectItem>
+   519→                ))}
+   520→              </SelectContent>
+   521→            </Select>
+   522→            <p className="text-xs text-muted-foreground">
+   523→              استخدم <b>Anthropic</b> إذا كان المزود يستخدم بنية Claude Messages API
+   524→              (مثل Anthropic نفسها أو مزود موحد يدعم claude). تحوّل البوابة طلبات
+   525→              OpenAI تلقائياً إلى بنية Anthropic وتعيد الرد بصيغة OpenAI.
+   526→            </p>
+   527→          </div>
+   528→
+   529→          {!editing && (
+   530→            <>
+   531→              <div className="space-y-2">
+   532→                <div className="flex items-center justify-between">
+   533→                  <Label>المسارات (Endpoints)</Label>
+   534→                  <Button
+   535→                    type="button"
+   536→                    variant="ghost"
+   537→                    size="sm"
+   538→                    onClick={() => setEndpoints([...endpoints, { type: "custom", path: "" }])}
+   539→                  >
+   540→                    <Plus className="w-3.5 h-3.5 ml-1" />
+   541→                    إضافة مسار
+   542→                  </Button>
+   543→                </div>
+   544→                <div className="space-y-2 max-h-48 overflow-y-auto border rounded-lg p-2 bg-muted/30">
+   545→                  {endpoints.map((ep, i) => (
+   546→                    <div key={i} className="flex gap-2">
+   547→                      <Input
+   548→                        className="w-32"
+   549→                        value={ep.type}
+   550→                        onChange={(e) => {
+   551→                          const next = [...endpoints];
+   552→                          next[i] = { ...next[i], type: e.target.value };
+   553→                          setEndpoints(next);
+   554→                        }}
+   555→                        placeholder="النوع"
+   556→                        dir="ltr"
+   557→                      />
+   558→                      <Input
+   559→                        className="flex-1"
+   560→                        value={ep.path}
+   561→                        onChange={(e) => {
+   562→                          const next = [...endpoints];
+   563→                          next[i] = { ...next[i], path: e.target.value };
+   564→                          setEndpoints(next);
+   565→                        }}
+   566→                        placeholder="/v1/chat/completions"
+   567→                        dir="ltr"
+   568→                      />
+   569→                      <Button
+   570→                        type="button"
+   571→                        variant="ghost"
+   572→                        size="icon"
+   573→                        onClick={() => setEndpoints(endpoints.filter((_, j) => j !== i))}
+   574→                      >
+   575→                        <Trash2 className="w-4 h-4 text-destructive" />
+   576→                      </Button>
+   577→                    </div>
+   578→                  ))}
+   579→                </div>
+   580→              </div>
+   581→
+   582→              <div className="space-y-2">
+   583→                <Label>النماذج المدعومة (اختياري)</Label>
+   584→                <Textarea
+   585→                  value={modelsText}
+   586→                  onChange={(e) => setModelsText(e.target.value)}
+   587→                  placeholder={"gpt-4o, gpt-4o-mini\ngpt-4.1"}
+   588→                  className="font-mono text-sm"
+   589→                  dir="ltr"
+   590→                />
+   591→                <p className="text-xs text-muted-foreground">
+   592→                  افصل بين النماذج بفاصلة أو سطر جديد. اتركه فارغًا لجعل المزود
+   593→                  يدعم أي نموذج (Wildcard).
+   594→                </p>
+   595→              </div>
+   596→            </>
+   597→          )}
+   598→        </div>
+   599→
+   600→        <DialogFooter>
+   601→          <Button variant="outline" onClick={() => onOpenChange(false)}>
+   602→            إلغاء
+   603→          </Button>
+   604→          <Button onClick={handleSubmit} disabled={loading}>
+   605→            {loading && <Loader2 className="w-4 h-4 ml-2 animate-spin" />}
+   606→            {editing ? "حفظ" : "إضافة"}
+   607→          </Button>
+   608→        </DialogFooter>
+   609→      </DialogContent>
+   610→    </Dialog>
+   611→  );
+   612→}
+   613→
+   614→// ───────────────────────── Provider Detail Sheet ─────────────────────────
+   615→
+   616→function ProviderDetailSheet({
+   617→  providerId,
+   618→  onOpenChange,
+   619→}: {
+   620→  providerId: string | null;
+   621→  onOpenChange: (o: boolean) => void;
+   622→}) {
+   623→  const { data, isLoading } = useQuery<{ provider: ProviderDetail }>({
+   624→    queryKey: ["provider", providerId],
+   625→    queryFn: () => api.get(`/api/providers/${providerId}`),
+   626→    enabled: !!providerId,
+   627→  });
+   628→
+   629→  return (
+   630→    <Sheet open={!!providerId} onOpenChange={onOpenChange}>
+   631→      <SheetContent className="w-full sm:max-w-2xl overflow-y-auto p-0">
+   632→        <SheetHeader className="px-6 py-4 border-b sticky top-0 bg-background z-10">
+   633→          <SheetTitle className="flex items-center gap-2">
+   634→            <Server className="w-5 h-5" />
+   635→            {data?.provider.name || "تحميل..."}
+   636→          </SheetTitle>
+   637→          {data?.provider.baseUrl && (
+   638→            <p className="text-xs text-muted-foreground" dir="ltr">
+   639→              {data.provider.baseUrl}
+   640→            </p>
+   641→          )}
+   642→        </SheetHeader>
+   643→
+   644→        {isLoading || !data ? (
+   645→          <div className="p-6 flex justify-center">
+   646→            <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+   647→          </div>
+   648→        ) : (
+   649→          <div className="p-6">
+   650→            <Tabs defaultValue="keys">
+   651→              <TabsList className="grid w-full grid-cols-3 mb-4">
+   652→                <TabsTrigger value="keys">
+   653→                  <KeyRound className="w-4 h-4 ml-1" />
+   654→                  المفاتيح
+   655→                </TabsTrigger>
+   656→                <TabsTrigger value="endpoints">
+   657→                  <Route className="w-4 h-4 ml-1" />
+   658→                  المسارات
+   659→                </TabsTrigger>
+   660→                <TabsTrigger value="models">
+   661→                  <Cpu className="w-4 h-4 ml-1" />
+   662→                  النماذج
+   663→                </TabsTrigger>
+   664→              </TabsList>
+   665→
+   666→              <TabsContent value="keys">
+   667→                <KeysManager providerId={data.provider.id} keys={data.provider.keys} />
+   668→              </TabsContent>
+   669→              <TabsContent value="endpoints">
+   670→                <EndpointsManager
+   671→                  providerId={data.provider.id}
+   672→                  endpoints={data.provider.endpoints}
+   673→                />
+   674→              </TabsContent>
+   675→              <TabsContent value="models">
+   676→                <ModelsManager
+   677→                  providerId={data.provider.id}
+   678→                  models={data.provider.models}
+   679→                />
+   680→              </TabsContent>
+   681→            </Tabs>
+   682→          </div>
+   683→        )}
+   684→      </SheetContent>
+   685→    </Sheet>
+   686→  );
+   687→}
+   688→
+   689→// ───────────────────────── Keys Manager ─────────────────────────
+   690→
+   691→function KeysManager({ providerId, keys }: { providerId: string; keys: KeyItem[] }) {
+   692→  const qc = useQueryClient();
+   693→  const [adding, setAdding] = useState(false);
+   694→  const [newKey, setNewKey] = useState("");
+   695→  const [newName, setNewName] = useState("");
+   696→  const [bulkMode, setBulkMode] = useState(false);
+   697→  const [bulkKeys, setBulkKeys] = useState("");
+   698→  const [loading, setLoading] = useState(false);
+   699→
+   700→  const addMut = useMutation({
+   701→    mutationFn: () =>
+   702→      api.post(`/api/providers/${providerId}/keys`, { key: newKey, name: newName }),
+   703→    onSuccess: () => {
+   704→      qc.invalidateQueries({ queryKey: ["provider", providerId] });
+   705→      qc.invalidateQueries({ queryKey: ["providers"] });
+   706→      qc.invalidateQueries({ queryKey: ["stats"] });
+   707→      setNewKey("");
+   708→      setNewName("");
+   709→      setAdding(false);
+   710→      toast.success("تمت إضافة المفتاح");
+   711→    },
+   712→    onError: (e) => toast.error((e as Error).message),
+   713→  });
+   714→
+   715→  const addBulkMut = useMutation({
+   716→    mutationFn: async () => {
+   717→      // Split by newlines, commas, or spaces; trim; deduplicate; drop empties
+   718→      const list = Array.from(
+   719→        new Set(
+   720→          bulkKeys
+   721→            .split(/[\n,\s]+/)
+   722→            .map((k) => k.trim())
+   723→            .filter(Boolean)
+   724→        )
+   725→      );
+   726→      let ok = 0;
+   727→      let fail = 0;
+   728→      for (const k of list) {
+   729→        try {
+   730→          await api.post(`/api/providers/${providerId}/keys`, { key: k });
+   731→          ok++;
+   732→        } catch {
+   733→          fail++;
+   734→        }
+   735→      }
+   736→      return { ok, fail, total: list.length };
+   737→    },
+   738→    onSuccess: ({ ok, fail, total }) => {
+   739→      qc.invalidateQueries({ queryKey: ["provider", providerId] });
+   740→      qc.invalidateQueries({ queryKey: ["providers"] });
+   741→      qc.invalidateQueries({ queryKey: ["stats"] });
+   742→      setBulkKeys("");
+   743→      setAdding(false);
+   744→      if (fail === 0) {
+   745→        toast.success(`تمت إضافة ${ok} مفتاح بنجاح`);
+   746→      } else {
+   747→        toast.success(`تمت إضافة ${ok} من ${total} مفتاح${fail > 0 ? ` (${fail} فشل)` : ""}`);
+   748→      }
+   749→    },
+   750→    onError: (e) => toast.error((e as Error).message),
+   751→  });
+   752→
+   753→  const delMut = useMutation({
+   754→    mutationFn: (id: string) => api.del(`/api/providers/${providerId}/keys/${id}`),
+   755→    onSuccess: () => {
+   756→      qc.invalidateQueries({ queryKey: ["provider", providerId] });
+   757→      qc.invalidateQueries({ queryKey: ["providers"] });
+   758→      toast.success("تم حذف المفتاح");
+   759→    },
+   760→    onError: (e) => toast.error((e as Error).message),
+   761→  });
+   762→
+   763→  const toggleMut = useMutation({
+   764→    mutationFn: ({ id, isActive }: { id: string; isActive: boolean }) =>
+   765→      api.patch(`/api/providers/${providerId}/keys/${id}`, { isActive }),
+   766→    onSuccess: () => {
+   767→      qc.invalidateQueries({ queryKey: ["provider", providerId] });
+   768→    },
+   769→    onError: (e) => toast.error((e as Error).message),
+   770→  });
+   771→
+   772→  const resetMut = useMutation({
+   773→    mutationFn: (id: string) =>
+   774→      api.patch(`/api/providers/${providerId}/keys/${id}`, { reset: true }),
+   775→    onSuccess: () => {
+   776→      qc.invalidateQueries({ queryKey: ["provider", providerId] });
+   777→      toast.success("تمت إعادة تفعيل المفتاح");
+   778→    },
+   779→    onError: (e) => toast.error((e as Error).message),
+   780→  });
+   781→
+   782→  const resetAllMut = useMutation({
+   783→    mutationFn: async () => {
+   784→      const disabled = keys.filter((k) => k.status !== "active");
+   785→      await Promise.all(
+   786→        disabled.map((k) =>
+   787→          api.patch(`/api/providers/${providerId}/keys/${k.id}`, { reset: true })
+   788→        )
+   789→      );
+   790→    },
+   791→    onSuccess: () => {
+   792→      qc.invalidateQueries({ queryKey: ["provider", providerId] });
+   793→      qc.invalidateQueries({ queryKey: ["providers"] });
+   794→      toast.success("تمت إعادة تفعيل جميع المفاتيح");
+   795→    },
+   796→    onError: (e) => toast.error((e as Error).message),
+   797→  });
+   798→
+   799→  const disabledCount = keys.filter((k) => k.status !== "active").length;
+   800→
+   801→  return (
+   802→    <div className="space-y-3">
+   803→      <div className="flex items-center justify-between flex-wrap gap-2">
+   804→        <div className="text-sm text-muted-foreground">
+   805→          {keys.length} مفتاح
+   806→          {disabledCount > 0 && (
+   807→            <span className="mr-2 text-amber-600 dark:text-amber-400">
+   808→              ({disabledCount} بحاجة لإعادة تفعيل)
+   809→            </span>
+   810→          )}
+   811→        </div>
+   812→        <div className="flex gap-2">
+   813→          {disabledCount > 0 && (
+   814→            <Button
+   815→              size="sm"
+   816→              variant="outline"
+   817→              onClick={() => resetAllMut.mutate()}
+   818→              disabled={resetAllMut.isPending}
+   819→            >
+   820→              <RefreshCw className="w-4 h-4 ml-1" />
+   821→              إعادة تفعيل الكل
+   822→            </Button>
+   823→          )}
+   824→          <Button size="sm" onClick={() => { setAdding((v) => !v); setBulkMode(false); }}>
+   825→            <Plus className="w-4 h-4 ml-1" />
+   826→            إضافة مفتاح
+   827→          </Button>
+   828→        </div>
+   829→      </div>
+   830→
+   831→      {adding && (
+   832→        <Card>
+   833→          <CardContent className="p-4 space-y-3">
+   834→            {/* Toggle between single and bulk modes */}
+   835→            <div className="flex gap-2 border-b pb-3">
+   836→              <Button
+   837→                size="sm"
+   838→                variant={!bulkMode ? "default" : "outline"}
+   839→                onClick={() => setBulkMode(false)}
+   840→              >
+   841→                مفتاح واحد
+   842→              </Button>
+   843→              <Button
+   844→                size="sm"
+   845→                variant={bulkMode ? "default" : "outline"}
+   846→                onClick={() => setBulkMode(true)}
+   847→              >
+   848→                مفاتيح متعددة
+   849→              </Button>
+   850→            </div>
+   851→
+   852→            {!bulkMode ? (
+   853→              <>
+   854→                <div className="space-y-2">
+   855→                  <Label>مفتاح API *</Label>
+   856→                  <Input
+   857→                    value={newKey}
+   858→                    onChange={(e) => setNewKey(e.target.value)}
+   859→                    placeholder="sk-..."
+   860→                    dir="ltr"
+   861→                    className="font-mono"
+   862→                  />
+   863→                </div>
+   864→                <div className="space-y-2">
+   865→                  <Label>اسم تعريفي (اختياري)</Label>
+   866→                  <Input
+   867→                    value={newName}
+   868→                    onChange={(e) => setNewName(e.target.value)}
+   869→                    placeholder="الحساب الأساسي"
+   870→                  />
+   871→                </div>
+   872→                <div className="flex gap-2">
+   873→                  <Button
+   874→                    size="sm"
+   875→                    disabled={!newKey.trim() || loading}
+   876→                    onClick={async () => {
+   877→                      setLoading(true);
+   878→                      try {
+   879→                        await addMut.mutateAsync();
+   880→                      } finally {
+   881→                        setLoading(false);
+   882→                      }
+   883→                    }}
+   884→                  >
+   885→                    {loading && <Loader2 className="w-4 h-4 ml-1 animate-spin" />}
+   886→                    حفظ
+   887→                  </Button>
+   888→                  <Button size="sm" variant="outline" onClick={() => setAdding(false)}>
+   889→                    إلغاء
+   890→                  </Button>
+   891→                </div>
+   892→              </>
+   893→            ) : (
+   894→              <>
+   895→                <div className="space-y-2">
+   896→                  <Label>المفاتيح *</Label>
+   897→                  <Textarea
+   898→                    value={bulkKeys}
+   899→                    onChange={(e) => setBulkKeys(e.target.value)}
+   900→                    placeholder={"ضع كل مفتاح في سطر منفصل:\nsk-aaa...\nsk-bbb...\nsk-ccc..."}
+   901→                    dir="ltr"
+   902→                    className="font-mono text-sm min-h-[120px]"
+   903→                  />
+   904→                  <p className="text-xs text-muted-foreground">
+   905→                    يمكنك لصق المفاتيح مفصولة بأسطر جديدة، فواصل، أو مسافات.
+   906→                    سيتم إزالة التكرار تلقائياً.
+   907→                  </p>
+   908→                </div>
+   909→                <div className="flex items-center gap-2">
+   910→                  <Button
+   911→                    size="sm"
+   912→                    disabled={!bulkKeys.trim() || addBulkMut.isPending}
+   913→                    onClick={() => addBulkMut.mutate()}
+   914→                  >
+   915→                    {addBulkMut.isPending && <Loader2 className="w-4 h-4 ml-1 animate-spin" />}
+   916→                    إضافة المفاتيح
+   917→                  </Button>
+   918→                  <Button size="sm" variant="outline" onClick={() => setAdding(false)}>
+   919→                    إلغاء
+   920→                  </Button>
+   921→                  {bulkKeys.trim() && (
+   922→                    <span className="text-xs text-muted-foreground">
+   923→                      {Array.from(new Set(bulkKeys.split(/[\n,\s]+/).map(k=>k.trim()).filter(Boolean))).length} مفتاح جاهز
+   924→                    </span>
+   925→                  )}
+   926→                </div>
+   927→              </>
+   928→            )}
+   929→          </CardContent>
+   930→        </Card>
+   931→      )}
+   932→
+   933→      {keys.length === 0 && !adding ? (
+   934→        <div className="py-8 text-center text-sm text-muted-foreground">
+   935→          لا توجد مفاتيح بعد. أضف مفتاحًا للبدء.
+   936→        </div>
+   937→      ) : (
+   938→        <div className="space-y-2">
+   939→          {keys.map((k) => (
+   940→            <KeyRow
+   941→              key={k.id}
+   942→              k={k}
+   943→              onToggle={(isActive) => toggleMut.mutate({ id: k.id, isActive })}
+   944→              onReset={() => resetMut.mutate(k.id)}
+   945→              onDelete={() => {
+   946→                if (confirm("حذف هذا المفتاح؟")) delMut.mutate(k.id);
+   947→              }}
+   948→            />
+   949→          ))}
+   950→        </div>
+   951→      )}
+   952→    </div>
+   953→  );
+   954→}
+   955→
+   956→function KeyRow({
+   957→  k,
+   958→  onToggle,
+   959→  onReset,
+   960→  onDelete,
+   961→}: {
+   962→  k: KeyItem;
+   963→  onToggle: (v: boolean) => void;
+   964→  onReset: () => void;
+   965→  onDelete: () => void;
+   966→}) {
+   967→  const [show, setShow] = useState(false);
+   968→  const statusMeta = keyStatusMeta(k.status);
+   969→
+   970→  return (
+   971→    <Card>
+   972→      <CardContent className="p-3">
+   973→        <div className="flex items-start gap-3">
+   974→          <div className="flex-1 min-w-0">
+   975→            <div className="flex items-center gap-2 flex-wrap">
+   976→              <span className="font-medium text-sm">
+   977→                {k.name || "بدون اسم"}
+   978→              </span>
+   979→              <Badge
+   980→                variant="outline"
+   981→                className={`font-mono ${statusMeta.className}`}
+   982→              >
+   983→                {statusMeta.icon}
+   984→                {statusMeta.label}
+   985→              </Badge>
+   986→            </div>
+   987→            <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground">
+   988→              <span className="font-mono" dir="ltr">
+   989→                {show ? `••••${k.keyPreview}` : `••••••••${k.keyPreview}`}
+   990→              </span>
+   991→              <Button
+   992→                variant="ghost"
+   993→                size="icon"
+   994→                className="h-5 w-5"
+   995→                onClick={() => setShow((v) => !v)}
+   996→              >
+   997→                <Copy className="w-3 h-3" />
+   998→              </Button>
+   999→            </div>
+  1000→            <div className="flex items-center gap-3 mt-2 text-[11px] text-muted-foreground flex-wrap">
+  1001→              <span>طلبات: {k.totalRequests}</span>
+  1002→              <span className="text-emerald-600 dark:text-emerald-400">
+  1003→                نجاح: {k.totalSuccess}
+  1004→              </span>
+  1005→              <span className="text-destructive">أخطاء: {k.totalErrors}</span>
+  1006→              {k.lastUsedAt && (
+  1007→                <span className="flex items-center gap-1">
+  1008→                  <Clock className="w-3 h-3" />
+  1009→                  {timeAgo(k.lastUsedAt)}
+  1010→                </span>
+  1011→              )}
+  1012→            </div>
+  1013→            {k.lastError && k.status !== "active" && (
+  1014→              <div className="mt-1.5 text-[11px] text-destructive flex items-center gap-1">
+  1015→                <AlertCircle className="w-3 h-3" />
+  1016→                <span className="truncate" dir="ltr">{k.lastError}</span>
+  1017→              </div>
+  1018→            )}
+  1019→          </div>
+  1020→          <div className="flex flex-col items-end gap-2">
+  1021→            <Switch checked={k.isActive} onCheckedChange={onToggle} />
+  1022→            <DropdownMenu>
+  1023→              <DropdownMenuTrigger asChild>
+  1024→                <Button variant="ghost" size="icon" className="h-7 w-7">
+  1025→                  <MoreVertical className="w-4 h-4" />
+  1026→                </Button>
+  1027→              </DropdownMenuTrigger>
+  1028→              <DropdownMenuContent align="start">
+  1029→                <DropdownMenuItem onClick={onReset}>
+  1030→                  <RefreshCw className="w-4 h-4 ml-2" />
+  1031→                  إعادة تفعيل
+  1032→                </DropdownMenuItem>
+  1033→                <DropdownMenuItem onClick={onToggle.bind(null, !k.isActive)}>
+  1034→                  <Power className="w-4 h-4 ml-2" />
+  1035→                  {k.isActive ? "تعطيل" : "تفعيل"}
+  1036→                </DropdownMenuItem>
+  1037→                <DropdownMenuSeparator />
+  1038→                <DropdownMenuItem onClick={onDelete} className="text-destructive focus:text-destructive">
+  1039→                  <Trash2 className="w-4 h-4 ml-2" />
+  1040→                  حذف
+  1041→                </DropdownMenuItem>
+  1042→              </DropdownMenuContent>
+  1043→            </DropdownMenu>
+  1044→          </div>
+  1045→        </div>
+  1046→      </CardContent>
+  1047→    </Card>
+  1048→  );
+  1049→}
+  1050→
+  1051→function keyStatusMeta(status: string) {
+  1052→  switch (status) {
+  1053→    case "active":
+  1054→      return { label: "نشط", className: "text-emerald-600", icon: <CheckCircle2 className="w-3 h-3 ml-1" /> };
+  1055→    case "rate_limited":
+  1056→      return { label: "حد المعدل", className: "text-amber-600", icon: <Clock className="w-3 h-3 ml-1" /> };
+  1057→    case "quota_exceeded":
+  1058→      return { label: "تجاوز الحصة", className: "text-orange-600", icon: <AlertCircle className="w-3 h-3 ml-1" /> };
+  1059→    case "disabled":
+  1060→      return { label: "معطّل", className: "text-destructive", icon: <XCircle className="w-3 h-3 ml-1" /> };
+  1061→    case "error":
+  1062→      return { label: "خطأ", className: "text-destructive", icon: <AlertCircle className="w-3 h-3 ml-1" /> };
+  1063→    case "exhausted":
+  1064→      return { label: "منتهي", className: "text-destructive", icon: <XCircle className="w-3 h-3 ml-1" /> };
+  1065→    default:
+  1066→      return { label: status, className: "", icon: null };
+  1067→  }
+  1068→}
+  1069→
+  1070→// ───────────────────────── Endpoints Manager ─────────────────────────
+  1071→
+  1072→function EndpointsManager({
+  1073→  providerId,
+  1074→  endpoints,
+  1075→}: {
+  1076→  providerId: string;
+  1077→  endpoints: Array<{ id: string; type: string; path: string; method: string }>;
+  1078→}) {
+  1079→  const qc = useQueryClient();
+  1080→  const [newType, setNewType] = useState("chat");
+  1081→  const [newPath, setNewPath] = useState("");
+  1082→  const [editing, setEditing] = useState<Record<string, { path: string }>>({});
+  1083→
+  1084→  const addMut = useMutation({
+  1085→    mutationFn: () =>
+  1086→      api.post(`/api/providers/${providerId}/endpoints`, {
+  1087→        type: newType,
+  1088→        path: newPath,
+  1089→      }),
+  1090→    onSuccess: () => {
+  1091→      qc.invalidateQueries({ queryKey: ["provider", providerId] });
+  1092→      qc.invalidateQueries({ queryKey: ["providers"] });
+  1093→      setNewPath("");
+  1094→      toast.success("تمت إضافة المسار");
+  1095→    },
+  1096→    onError: (e) => {
+  1097→      if (e instanceof ApiError && e.status === 400) {
+  1098→        toast.error("هذا النوع موجود بالفعل. عدّل المسار الموجود.");
+  1099→      } else {
+  1100→        toast.error((e as Error).message);
+  1101→      }
+  1102→    },
+  1103→  });
+  1104→
+  1105→  const updMut = useMutation({
+  1106→    mutationFn: ({ id, path }: { id: string; path: string }) =>
+  1107→      api.patch(`/api/providers/${providerId}/endpoints/${id}`, { path }),
+  1108→    onSuccess: () => {
+  1109→      qc.invalidateQueries({ queryKey: ["provider", providerId] });
+  1110→      qc.invalidateQueries({ queryKey: ["providers"] });
+  1111→      toast.success("تم تحديث المسار");
+  1112→    },
+  1113→    onError: (e) => toast.error((e as Error).message),
+  1114→  });
+  1115→
+  1116→  const delMut = useMutation({
+  1117→    mutationFn: (id: string) => api.del(`/api/providers/${providerId}/endpoints/${id}`),
+  1118→    onSuccess: () => {
+  1119→      qc.invalidateQueries({ queryKey: ["provider", providerId] });
+  1120→      qc.invalidateQueries({ queryKey: ["providers"] });
+  1121→      toast.success("تم حذف المسار");
+  1122→    },
+  1123→    onError: (e) => toast.error((e as Error).message),
+  1124→  });
+  1125→
+  1126→  return (
+  1127→    <div className="space-y-3">
+  1128→      <div className="text-sm text-muted-foreground">
+  1129→        {endpoints.length} مسار — يُستخدم كل مسار حسب نوع الطلب الوارد
+  1130→      </div>
+  1131→
+  1132→      <Card>
+  1133→        <CardContent className="p-3 space-y-2">
+  1134→          <div className="text-xs font-medium">إضافة مسار جديد</div>
+  1135→          <div className="flex gap-2">
+  1136→            <Select value={newType} onValueChange={setNewType}>
+  1137→              <SelectTrigger className="w-36">
+  1138→                <SelectValue />
+  1139→              </SelectTrigger>
+  1140→              <SelectContent>
+  1141→                {ENDPOINT_PRESETS.map((e) => (
+  1142→                  <SelectItem key={e.type} value={e.type}>
+  1143→                    {e.type}
+  1144→                  </SelectItem>
+  1145→                ))}
+  1146→                <SelectItem value="custom">custom</SelectItem>
+  1147→              </SelectContent>
+  1148→            </Select>
+  1149→            <Input
+  1150→              value={newPath}
+  1151→              onChange={(e) => setNewPath(e.target.value)}
+  1152→              placeholder="/v1/chat/completions"
+  1153→              dir="ltr"
+  1154→              className="flex-1"
+  1155→            />
+  1156→            <Button
+  1157→              size="sm"
+  1158→              disabled={!newPath.trim()}
+  1159→              onClick={() => addMut.mutate()}
+  1160→            >
+  1161→              <Plus className="w-4 h-4" />
+  1162→            </Button>
+  1163→          </div>
+  1164→        </CardContent>
+  1165→      </Card>
+  1166→
+  1167→      <div className="space-y-2">
+  1168→        {endpoints.map((ep) => (
+  1169→          <Card key={ep.id}>
+  1170→            <CardContent className="p-3 flex items-center gap-2">
+  1171→              <Badge variant="outline" className="font-mono shrink-0">
+  1172→                {ep.type}
+  1173→              </Badge>
+  1174→              <Input
+  1175→                value={editing[ep.id]?.path ?? ep.path}
+  1176→                onChange={(e) =>
+  1177→                  setEditing((s) => ({
+  1178→                    ...s,
+  1179→                    [ep.id]: { path: e.target.value },
+  1180→                  }))
+  1181→                }
+  1182→                dir="ltr"
+  1183→                className="flex-1 font-mono text-sm"
+  1184→              />
+  1185→              {editing[ep.id] && editing[ep.id].path !== ep.path && (
+  1186→                <Button
+  1187→                  size="sm"
+  1188→                  onClick={() => {
+  1189→                    updMut.mutate({ id: ep.id, path: editing[ep.id].path });
+  1190→                    setEditing((s) => {
+  1191→                      const n = { ...s };
+  1192→                      delete n[ep.id];
+  1193→                      return n;
+  1194→                    });
+  1195→                  }}
+  1196→                >
+  1197→                  حفظ
+  1198→                </Button>
+  1199→              )}
+  1200→              <Button
+  1201→                size="icon"
+  1202→                variant="ghost"
+  1203→                onClick={() => {
+  1204→                  if (confirm("حذف هذا المسار؟")) delMut.mutate(ep.id);
+  1205→                }}
+  1206→              >
+  1207→                <Trash2 className="w-4 h-4 text-destructive" />
+  1208→              </Button>
+  1209→            </CardContent>
+  1210→          </Card>
+  1211→        ))}
+  1212→      </div>
+  1213→    </div>
+  1214→  );
+  1215→}
+  1216→
+  1217→// ───────────────────────── Models Manager ─────────────────────────
+  1218→
+  1219→function ModelsManager({
+  1220→  providerId,
+  1221→  models,
+  1222→}: {
+  1223→  providerId: string;
+  1224→  models: Array<{ id: string; name: string }>;
+  1225→}) {
+  1226→  const qc = useQueryClient();
+  1227→  const [newModel, setNewModel] = useState("");
+  1228→
+  1229→  const addMut = useMutation({
+  1230→    mutationFn: () =>
+  1231→      api.post(`/api/providers/${providerId}/models`, { name: newModel }),
+  1232→    onSuccess: () => {
+  1233→      qc.invalidateQueries({ queryKey: ["provider", providerId] });
+  1234→      qc.invalidateQueries({ queryKey: ["providers"] });
+  1235→      qc.invalidateQueries({ queryKey: ["stats"] });
+  1236→      setNewModel("");
+  1237→      toast.success("تمت إضافة النموذج");
+  1238→    },
+  1239→    onError: (e) => toast.error((e as Error).message),
+  1240→  });
+  1241→
+  1242→  const delMut = useMutation({
+  1243→    mutationFn: (id: string) => api.del(`/api/providers/${providerId}/models?modelId=${id}`),
+  1244→    onSuccess: () => {
+  1245→      qc.invalidateQueries({ queryKey: ["provider", providerId] });
+  1246→      qc.invalidateQueries({ queryKey: ["providers"] });
+  1247→      qc.invalidateQueries({ queryKey: ["stats"] });
+  1248→      toast.success("تم حذف النموذج");
+  1249→    },
+  1250→    onError: (e) => toast.error((e as Error).message),
+  1251→  });
+  1252→
+  1253→  return (
+  1254→    <div className="space-y-3">
+  1255→      <div className="text-sm text-muted-foreground">
+  1256→        {models.length === 0
+  1257→          ? "لا توجد نماذج محددة — المزود يدعم أي نموذج (Wildcard)."
+  1258→          : `${models.length} نموذج`}
+  1259→      </div>
+  1260→
+  1261→      <div className="flex gap-2">
+  1262→        <Input
+  1263→          value={newModel}
+  1264→          onChange={(e) => setNewModel(e.target.value)}
+  1265→          placeholder="gpt-4o"
+  1266→          dir="ltr"
+  1267→          className="font-mono"
+  1268→          onKeyDown={(e) => {
+  1269→            if (e.key === "Enter" && newModel.trim()) addMut.mutate();
+  1270→          }}
+  1271→        />
+  1272→        <Button size="sm" disabled={!newModel.trim()} onClick={() => addMut.mutate()}>
+  1273→          <Plus className="w-4 h-4 ml-1" />
+  1274→          إضافة
+  1275→        </Button>
+  1276→      </div>
+  1277→
+  1278→      <div className="flex flex-wrap gap-2">
+  1279→        {models.map((m) => (
+  1280→          <Badge
+  1281→            key={m.id}
+  1282→            variant="secondary"
+  1283→            className="font-mono pl-1 pr-2 py-1 gap-1"
+  1284→          >
+  1285→            {m.name}
+  1286→            <button
+  1287→              onClick={() => delMut.mutate(m.id)}
+  1288→              className="hover:text-destructive"
+  1289→            >
+  1290→              <Trash2 className="w-3 h-3" />
+  1291→            </button>
+  1292→          </Badge>
+  1293→        ))}
+  1294→      </div>
+  1295→    </div>
+  1296→  );
+  1297→}
+  1298→
+  1299→// ───────────────────────── helpers ─────────────────────────
+  1300→
+  1301→function XCircle(props: React.SVGProps<SVGSVGElement>) {
+  1302→  return (
+  1303→    <svg
+  1304→      xmlns="http://www.w3.org/2000/svg"
+  1305→      viewBox="0 0 24 24"
+  1306→      fill="none"
+  1307→      stroke="currentColor"
+  1308→      strokeWidth="2"
+  1309→      strokeLinecap="round"
+  1310→      strokeLinejoin="round"
+  1311→      {...props}
+  1312→    >
+  1313→      <circle cx="12" cy="12" r="10" />
+  1314→      <path d="m15 9-6 6" />
+  1315→      <path d="m9 9 6 6" />
+  1316→    </svg>
+  1317→  );
+  1318→}
+  1319→
+  1320→function timeAgo(iso: string): string {
+  1321→  const d = new Date(iso).getTime();
+  1322→  const diff = Date.now() - d;
+  1323→  const min = Math.floor(diff / 60000);
+  1324→  if (min < 1) return "الآن";
+  1325→  if (min < 60) return `قبل ${min} د`;
+  1326→  const hr = Math.floor(min / 60);
+  1327→  if (hr < 24) return `قبل ${hr} س`;
+  1328→  const day = Math.floor(hr / 24);
+  1329→  return `قبل ${day} يوم`;
+  1330→}
+  1331→
