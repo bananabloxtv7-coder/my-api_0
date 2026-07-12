@@ -49,6 +49,8 @@ const STRIP_REQ_HEADERS = new Set([
   "x-vercel-deployment-url",
   "x-vercel-id",
   "x-gateway-token", // our own
+  "anthropic-version", // strip — only for Anthropic providers, not others
+  "anthropic-beta", // strip — only for Anthropic providers
 ]);
 
 /** Max bytes of an upstream error body to read for classification. */
