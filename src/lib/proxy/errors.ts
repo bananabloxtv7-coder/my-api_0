@@ -73,8 +73,11 @@ export function classifyResponse(
   }
 
   // Payment required — quota/billing (no balance)
+  // DON'T penalize the key — just rotate to the next key immediately.
+  // The key stays 'active' and will be retried on the next request
+  // (balance might be topped up by then). This is the same as 5xx behavior.
   if (status === 402) {
-    return { action: "quota_exhausted", cooldownMs: QUOTA_COOLDOWN, reason: "billing_required" };
+    return { action: "retry", cooldownMs: 0, reason: "no_balance" };
   }
 
   // Rate limited
@@ -85,7 +88,8 @@ export function classifyResponse(
   // Body-signature fallback (some providers return 200/500 with quota text)
   const bodyReason = matchBodyError(bodyText);
   if (bodyReason === "quota_exceeded" || bodyReason === "billing_required" || bodyReason === "daily_limit") {
-    return { action: "quota_exhausted", cooldownMs: QUOTA_COOLDOWN, reason: bodyReason };
+    // No balance — same as 402: rotate without penalty
+    return { action: "retry", cooldownMs: 0, reason: "no_balance" };
   }
   if (bodyReason === "rate_limited") {
     return { action: "cooldown", cooldownMs: RATE_LIMIT_COOLDOWN, reason: bodyReason };
