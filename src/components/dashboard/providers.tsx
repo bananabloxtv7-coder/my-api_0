@@ -577,6 +577,11 @@ function ProviderFormDialog({
                     </div>
                   ))}
                 </div>
+                <p className="text-xs text-muted-foreground">
+                  💡 لمزودين مثل <b>kie.ai</b> يتطلبون اسم النموذج في المسار، استخدم{" "}
+                  <code className="bg-muted px-1 rounded font-mono" dir="ltr">{"/{model}/v1/chat/completions"}</code>{" "}
+                  وستستبدل البوابة <code className="bg-muted px-1 rounded font-mono" dir="ltr">{'{model}'}</code> بالنموذج المطلوب تلقائياً.
+                </p>
               </div>
 
               <div className="space-y-2">
@@ -1127,6 +1132,11 @@ function EndpointsManager({
     <div className="space-y-3">
       <div className="text-sm text-muted-foreground">
         {endpoints.length} مسار — يُستخدم كل مسار حسب نوع الطلب الوارد
+      </div>
+      <div className="text-xs text-muted-foreground bg-muted/50 rounded-lg p-2 border">
+        💡 يمكنك استخدام <code className="bg-muted px-1 rounded font-mono" dir="ltr">{'{model}'}</code> في
+        المسار لإدراج اسم النموذج ديناميكياً. مثال:{" "}
+        <code className="bg-muted px-1 rounded font-mono" dir="ltr">/{'{model}'}/v1/chat/completions</code>
       </div>
 
       <Card>

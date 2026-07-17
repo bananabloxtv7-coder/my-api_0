@@ -235,8 +235,20 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
 
       // Build target URL: provider baseUrl + endpoint path + original query
       const base = provider.baseUrl.replace(/\/+$/, "");
-      const ep = endpoint.path.startsWith("/") ? endpoint.path : `/${endpoint.path}`;
-      const target = new URL(base + ep);
+      let epRaw = endpoint.path.startsWith("/") ? endpoint.path : `/${endpoint.path}`;
+      // ── Dynamic model interpolation ──
+      // Providers like kie.ai embed the model name in the URL path, e.g.
+      //   /{model}/v1/chat/completions  →  /gpt-5-2/v1/chat/completions
+      // If the path contains {model}, substitute it with the actual model.
+      if (epRaw.includes("{model}")) {
+        if (!model) {
+          // Can't resolve the path without a model — skip this key/provider.
+          clearKeyInFlight(key.id);
+          continue;
+        }
+        epRaw = epRaw.replace(/\{model\}/g, encodeURIComponent(model));
+      }
+      const target = new URL(base + epRaw);
       target.search = url.search;
 
       // Build forwarded headers (transparent, swap auth only)
