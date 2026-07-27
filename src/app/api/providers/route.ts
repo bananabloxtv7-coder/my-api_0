@@ -4,6 +4,7 @@ import { audit, getClientIp } from "@/lib/audit";
 import { invalidateUserCache } from "@/lib/proxy/cache";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 /** GET /api/providers — list the current user's providers with counts */
 export async function GET() {

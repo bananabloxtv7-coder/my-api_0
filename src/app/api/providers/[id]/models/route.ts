@@ -3,6 +3,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { invalidateUserCache } from "@/lib/proxy/cache";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 /** GET /api/providers/[id]/models */
 export async function GET(

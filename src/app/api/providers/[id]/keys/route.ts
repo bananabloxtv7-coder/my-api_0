@@ -5,6 +5,7 @@ import { audit, getClientIp } from "@/lib/audit";
 import { invalidateUserCache } from "@/lib/proxy/cache";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 /** GET /api/providers/[id]/keys — list keys (metadata only, no secrets) */
 export async function GET(

@@ -3,6 +3,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { invalidateUserCache } from "@/lib/proxy/cache";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 /** PATCH /api/providers/[id]/endpoints/[endpointId] */
 export async function PATCH(

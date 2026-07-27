@@ -4,6 +4,7 @@ import { audit, getClientIp } from "@/lib/audit";
 import { invalidateUserCache } from "@/lib/proxy/cache";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 /** PATCH /api/providers/[id]/keys/[keyId] — toggle active, reset status, etc. */
 export async function PATCH(

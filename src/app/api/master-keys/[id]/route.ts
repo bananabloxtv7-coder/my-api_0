@@ -3,6 +3,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { audit, getClientIp } from "@/lib/audit";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 /** PATCH /api/master-keys/[id] — toggle active / rename */
 export async function PATCH(

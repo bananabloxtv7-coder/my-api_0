@@ -4,6 +4,7 @@ import { generateMasterKey, sha256 } from "@/lib/crypto";
 import { audit, getClientIp } from "@/lib/audit";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 /** GET /api/master-keys */
 export async function GET() {

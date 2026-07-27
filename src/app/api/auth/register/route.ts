@@ -4,6 +4,7 @@ import { rateLimit } from "@/lib/rate-limit";
 import { audit, getClientIp } from "@/lib/audit";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 export async function POST(req: Request) {
   const ip = getClientIp(req);

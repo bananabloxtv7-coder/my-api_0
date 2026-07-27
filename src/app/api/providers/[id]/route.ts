@@ -4,6 +4,7 @@ import { audit, getClientIp } from "@/lib/audit";
 import { invalidateUserCache } from "@/lib/proxy/cache";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 async function getOwnedProvider(userId: string, id: string) {
   return db.provider.findFirst({ where: { id, userId } });

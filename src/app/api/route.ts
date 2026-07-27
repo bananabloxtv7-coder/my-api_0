@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 /** GET /api — health check */
 export async function GET() {
