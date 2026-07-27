@@ -33,7 +33,7 @@ export async function verifyPassword(
 
 /** Sign a JWT for a user. */
 export function signToken(payload: JwtPayload): string {
-  return jwt.sign(payload, getJwtSecret(), { expiresIn: getJwtExpiry() });
+  return jwt.sign(payload, getJwtSecret(), { expiresIn: getJwtExpiry() as any });
 }
 
 /** Verify a JWT and return the payload (or null). */
