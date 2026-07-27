@@ -557,11 +557,8 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
 function isKeyUsable(k: CachedKey, now: number): boolean {
   if (!k.isActive) return false;
   if (k.status === "active") return true;
-  if (k.status === "disabled" || k.status === "exhausted") return false;
-  // rate_limited / error → usable if cooldown expired
-  if (k.cooldownUntil && k.cooldownUntil.getTime() < now) {
-    // Auto-recover: clear the stale cooldown in-memory so the dashboard
-    // and subsequent requests see this key as healthy.
+  // If cooldown expired (or no cooldown set), auto-recover to active
+  if (!k.cooldownUntil || k.cooldownUntil.getTime() <= now) {
     k.status = "active";
     k.cooldownUntil = null;
     return true;
@@ -809,8 +806,12 @@ function markKeyBackground(
         data.totalRequests = { increment: 1 };
         break;
       case "disable":
-        data.status = "disabled";
-        data.isActive = false;
+        // Instead of bricking the key permanently (isActive = false),
+        // place it in a short 10-second cooldown so it auto-recovers
+        // for subsequent requests or other models!
+        data.status = "error";
+        data.isActive = true;
+        data.cooldownUntil = new Date(now.getTime() + 10000);
         data.totalErrors = { increment: 1 };
         data.totalRequests = { increment: 1 };
         data.lastError = opts.reason;
