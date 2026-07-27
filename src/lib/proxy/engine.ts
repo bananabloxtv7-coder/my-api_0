@@ -301,8 +301,8 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
         }
       }
 
-      // Provider timeout so a hanging upstream doesn't block rotation.
-      const timeoutMs = Math.min(Math.max(provider.timeoutMs || 120000, 5000), 300000);
+      // Provider timeout (max 12s so Vercel 15s function limit isn't exceeded, allowing fast failover)
+      const timeoutMs = Math.min(Math.max(provider.timeoutMs || 12000, 3000), 12000);
       try {
         init.signal = AbortSignal.timeout(timeoutMs);
       } catch {

@@ -6,6 +6,7 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   try {
     const updated = await db.providerApiKey.updateMany({
+      where: {},
       data: {
         status: "active",
         isActive: true,
@@ -16,7 +17,8 @@ export async function GET() {
 
     return NextResponse.json({
       success: true,
-      message: `Reactivated ${updated.count} API keys in the database!`,
+      count: updated.count,
+      message: `Reactivated ${updated.count} API keys!`,
     });
   } catch (err: unknown) {
     const errorMessage = err instanceof Error ? err.message : String(err);
