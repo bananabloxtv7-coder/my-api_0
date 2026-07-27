@@ -423,6 +423,18 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
           });
         }
 
+        const isSseStream = /text\/event-stream/i.test(
+          upstream.headers.get("content-type") || ""
+        );
+        if (isSseStream && upstream.body) {
+          const sanitized = sanitizeOpenAIStream(upstream.body);
+          return new Response(sanitized, {
+            status,
+            statusText: upstream.statusText,
+            headers: respHeaders,
+          });
+        }
+
         return new Response(upstream.body, {
           status,
           statusText: upstream.statusText,
@@ -901,4 +913,81 @@ function logRequestBackground(opts: LogRequestOpts): void {
       // best-effort
     }
   })();
+}
+
+/**
+ * Sanitize an OpenAI SSE stream to ensure it always ends with finish_reason and [DONE].
+ */
+function sanitizeOpenAIStream(
+  body: ReadableStream<Uint8Array> | null
+): ReadableStream<Uint8Array> {
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+
+  return new ReadableStream({
+    async start(controller) {
+      if (!body) {
+        controller.close();
+        return;
+      }
+      const reader = body.getReader();
+      let hasFinishReason = false;
+      let hasDone = false;
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const chunkStr = decoder.decode(value, { stream: true });
+          if (
+            chunkStr.includes('"finish_reason":') &&
+            !chunkStr.includes('"finish_reason":null') &&
+            !chunkStr.includes('"finish_reason": null')
+          ) {
+            hasFinishReason = true;
+          }
+          if (chunkStr.includes("data: [DONE]")) {
+            hasDone = true;
+          }
+          controller.enqueue(value);
+        }
+
+        const remaining = decoder.decode();
+        if (remaining) {
+          if (
+            remaining.includes('"finish_reason":') &&
+            !remaining.includes('"finish_reason":null') &&
+            !remaining.includes('"finish_reason": null')
+          ) {
+            hasFinishReason = true;
+          }
+          if (remaining.includes("data: [DONE]")) {
+            hasDone = true;
+          }
+          controller.enqueue(encoder.encode(remaining));
+        }
+
+        if (!hasFinishReason) {
+          const fallbackChunk = `data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n`;
+          controller.enqueue(encoder.encode(fallbackChunk));
+        }
+
+        if (!hasDone) {
+          const doneChunk = `data: [DONE]\n\n`;
+          controller.enqueue(encoder.encode(doneChunk));
+        }
+      } catch {
+        if (!hasFinishReason) {
+          controller.enqueue(
+            encoder.encode(`data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n`)
+          );
+        }
+        if (!hasDone) {
+          controller.enqueue(encoder.encode(`data: [DONE]\n\n`));
+        }
+      } finally {
+        controller.close();
+      }
+    },
+  });
 }
