@@ -934,48 +934,69 @@ function sanitizeOpenAIStream(
       const reader = body.getReader();
       let hasFinishReason = false;
       let hasDone = false;
+      let buffer = "";
+
+      const processLine = (line: string) => {
+        const trimmed = line.trim();
+        if (!trimmed) {
+          controller.enqueue(encoder.encode("\n"));
+          return;
+        }
+        if (trimmed.startsWith("data: ")) {
+          const payload = trimmed.slice(6).trim();
+          if (payload === "[DONE]") {
+            hasDone = true;
+            controller.enqueue(encoder.encode(line + "\n"));
+            return;
+          }
+          try {
+            const parsed = JSON.parse(payload);
+            // Skip empty preamble chunks like {"choices":[], ...} that crash Pi's parser
+            if (Array.isArray(parsed.choices) && parsed.choices.length === 0) {
+              return;
+            }
+            if (Array.isArray(parsed.choices)) {
+              for (const choice of parsed.choices) {
+                if (choice.finish_reason) {
+                  hasFinishReason = true;
+                }
+              }
+            }
+          } catch {
+            // non-JSON data line, pass through
+          }
+        }
+        controller.enqueue(encoder.encode(line + "\n"));
+      };
 
       try {
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
-          const chunkStr = decoder.decode(value, { stream: true });
-          if (
-            chunkStr.includes('"finish_reason":') &&
-            !chunkStr.includes('"finish_reason":null') &&
-            !chunkStr.includes('"finish_reason": null')
-          ) {
-            hasFinishReason = true;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+          for (const line of lines) {
+            processLine(line);
           }
-          if (chunkStr.includes("data: [DONE]")) {
-            hasDone = true;
-          }
-          controller.enqueue(value);
         }
 
-        const remaining = decoder.decode();
-        if (remaining) {
-          if (
-            remaining.includes('"finish_reason":') &&
-            !remaining.includes('"finish_reason":null') &&
-            !remaining.includes('"finish_reason": null')
-          ) {
-            hasFinishReason = true;
+        buffer += decoder.decode();
+        if (buffer) {
+          const lines = buffer.split("\n");
+          for (const line of lines) {
+            if (line) processLine(line);
           }
-          if (remaining.includes("data: [DONE]")) {
-            hasDone = true;
-          }
-          controller.enqueue(encoder.encode(remaining));
         }
 
         if (!hasFinishReason) {
-          const fallbackChunk = `data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n`;
-          controller.enqueue(encoder.encode(fallbackChunk));
+          controller.enqueue(
+            encoder.encode(`data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n`)
+          );
         }
 
         if (!hasDone) {
-          const doneChunk = `data: [DONE]\n\n`;
-          controller.enqueue(encoder.encode(doneChunk));
+          controller.enqueue(encoder.encode(`data: [DONE]\n\n`));
         }
       } catch {
         if (!hasFinishReason) {
