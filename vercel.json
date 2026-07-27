@@ -8,6 +8,12 @@
     },
     "src/app/v1/[...path]/route.ts": {
       "maxDuration": 60
+    },
+    "src/app/gw/v1/[...path]/route.ts": {
+      "maxDuration": 60
+    },
+    "src/app/proxy/v1/[...path]/route.ts": {
+      "maxDuration": 60
     }
   }
 }

@@ -32,6 +32,7 @@ const PATH_RULES: Array<{ type: EndpointType; test: RegExp }> = [
   { type: "chat", test: /\/chats?$/i },
   { type: "chat", test: /\/messages$/i },
   { type: "chat", test: /\/conversations?$/i },
+  { type: "chat", test: /\/ai\/chat/i },
   // ── Models ──
   { type: "models", test: /\/models$/i },
   // ── Embeddings ──
@@ -53,8 +54,11 @@ const PATH_RULES: Array<{ type: EndpointType; test: RegExp }> = [
 
 /** Detect the logical endpoint type from the requested path. */
 export function detectEndpointType(path: string): DetectedEndpoint {
-  // Strip mount prefixes: /api/v1 and /v1
+  // Strip ALL known mount prefixes: /gw/v1, /proxy/v1, /api/v1, /v1
+  // Order matters: longer prefixes first to avoid partial matches.
   const normalized = path
+    .replace(/^\/gw\/v1/i, "")
+    .replace(/^\/proxy\/v1/i, "")
     .replace(/^\/api\/v1/i, "")
     .replace(/^\/v1/i, "")
     .replace(/^\/+/, "/");

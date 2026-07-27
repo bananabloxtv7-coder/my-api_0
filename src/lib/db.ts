@@ -13,14 +13,7 @@ if (existsSync(gatewayPath)) {
 }
 config({ override: true });
 
-// Safety net: if DATABASE_URL is still a stale SQLite file: URL (sandbox
-// injection), force it to the Supabase pooler so the app always works locally.
-if (process.env.DATABASE_URL && /^file:/i.test(process.env.DATABASE_URL)) {
-  process.env.DATABASE_URL =
-    "postgresql://postgres.yevwwrnbuplxdvsdgnos:pkzGDUlPXAldm8iW@aws-0-eu-central-1.pooler.supabase.com:6543/postgres?pgbouncer=true&connection_limit=1";
-  process.env.DIRECT_URL =
-    "postgresql://postgres.yevwwrnbuplxdvsdgnos:pkzGDUlPXAldm8iW@aws-0-eu-central-1.pooler.supabase.com:5432/postgres";
-}
+// Enabled local database support (SQLite or PostgreSQL)
 
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined;

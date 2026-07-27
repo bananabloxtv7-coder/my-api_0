@@ -692,7 +692,6 @@ async function markKeySuccessSync(keyId: string, providerId: string): Promise<vo
         cooldownUntil: null,
         lastError: null,
         lastUsedAt: now,
-        lastErrorAt: now,
         totalSuccess: { increment: 1 },
         totalRequests: { increment: 1 },
       },

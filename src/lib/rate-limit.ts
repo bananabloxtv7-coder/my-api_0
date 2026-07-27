@@ -49,7 +49,7 @@ export function rateLimit({
   }
 
   bucket.tokens -= 1;
-  return { ok: true, remaining: Math.floor(bucket.tokens), limit, resetMs };
+  return { ok: true, remaining: Math.floor(bucket.tokens), limit, resetMs: 0 };
 }
 
 /** Clean up stale buckets periodically (cheap GC). */

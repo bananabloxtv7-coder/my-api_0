@@ -65,4 +65,6 @@ server.log
 /.zscripts/
 /download/
 /db/*.db
+*.db
+*.db-journal
 /examples/tool-results/
