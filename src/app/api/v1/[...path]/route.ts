@@ -2,6 +2,7 @@ import { proxyHandler } from "@/lib/proxy/handler";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 /**
  * Transparent reverse-proxy — legacy mount point: /api/v1/*
