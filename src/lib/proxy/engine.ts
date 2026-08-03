@@ -10,6 +10,16 @@ import {
   chatToResponsesRequest,
   responsesToChatResponse,
 } from "./responses-translate";
+import {
+  emulateToolsInRequest,
+  emulateToolsInResponse,
+  generateFakeStream,
+  type EmulationState
+} from "./tool-emulation";
+import {
+  chatToV0Request,
+  v0ToChatResponse,
+} from "./v0-translate";
 import { getCachedProviders, markKeyStateInCache, resetProviderKeysInCache, markKeyInFlight, clearKeyInFlight, isKeyInFlight, type CachedProvider, type CachedKey } from "./cache";
 
 export interface ProxyResult {
@@ -282,20 +292,34 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
         redirect: "follow",
       };
 
-      // ── Protocol translation (optional) ──
+      // ── Tool Emulation & Protocol Translation ──
       const isAnthropicProvider = provider.protocol === "anthropic";
       const isResponsesProvider = provider.protocol === "responses";
+      const isV0Provider = provider.protocol === "v0";
+      
+      const needsToolEmulation = model?.includes("claude-opus-5") || isV0Provider || isResponsesProvider;
+      const emulationState: EmulationState = { hasTools: false };
+      
+      let finalBodyJson = bodyJson;
+      if (needsToolEmulation && finalBodyJson) {
+        finalBodyJson = emulateToolsInRequest(finalBodyJson, emulationState);
+      }
+
       if (bodyBuffer && method !== "GET" && method !== "HEAD") {
-        if (isAnthropicProvider && bodyJson) {
-          const translated = openaiToAnthropicRequest(bodyJson);
+        if (isAnthropicProvider && finalBodyJson) {
+          const translated = openaiToAnthropicRequest(finalBodyJson);
           init.body = JSON.stringify(translated);
           if (!fwdHeaders.has("anthropic-version")) {
             fwdHeaders.set("anthropic-version", "2023-06-01");
           }
-        } else if (isResponsesProvider && bodyJson) {
-          // Convert Chat Completions (messages) → Responses API (input)
-          const translated = chatToResponsesRequest(bodyJson);
+        } else if (isResponsesProvider && finalBodyJson) {
+          const translated = chatToResponsesRequest(finalBodyJson);
           init.body = JSON.stringify(translated);
+        } else if (isV0Provider && finalBodyJson) {
+          const translated = chatToV0Request(finalBodyJson);
+          init.body = JSON.stringify(translated);
+        } else if (finalBodyJson && emulationState.hasTools) {
+          init.body = JSON.stringify(finalBodyJson);
         } else {
           init.body = bodyBuffer;
         }
@@ -400,32 +424,68 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
             });
           } else {
             const respText = await upstream.text();
-            const respJson = safeParseJson(respText);
-            const translated = anthropicToOpenAIResponse(respJson);
-            return new Response(JSON.stringify(translated), {
-              status,
-              statusText: upstream.statusText,
-              headers: respHeaders,
-            });
+            let respJson = safeParseJson(respText);
+            respJson = anthropicToOpenAIResponse(respJson);
+            if (emulationState.hasTools) respJson = emulateToolsInResponse(respJson, emulationState);
+            
+            if (emulationState.hasTools && bodyJson?.stream) {
+              respHeaders.set("content-type", "text/event-stream");
+              respHeaders.set("cache-control", "no-cache");
+              return new Response(generateFakeStream(respJson), { status, statusText: upstream.statusText, headers: respHeaders });
+            }
+            return new Response(JSON.stringify(respJson), { status, statusText: upstream.statusText, headers: respHeaders });
           }
         }
 
         // ── Protocol translation: Responses API → Chat Completions ──
         if (isResponsesProvider) {
           const respText = await upstream.text();
-          const respJson = safeParseJson(respText);
-          const translated = responsesToChatResponse(respJson);
+          let respJson = safeParseJson(respText);
+          respJson = responsesToChatResponse(respJson);
+          if (emulationState.hasTools) respJson = emulateToolsInResponse(respJson, emulationState);
+          
           respHeaders.set("content-type", "application/json");
-          return new Response(JSON.stringify(translated), {
-            status,
-            statusText: upstream.statusText,
-            headers: respHeaders,
-          });
+          if (emulationState.hasTools && bodyJson?.stream) {
+            respHeaders.set("content-type", "text/event-stream");
+            respHeaders.set("cache-control", "no-cache");
+            return new Response(generateFakeStream(respJson), { status, statusText: upstream.statusText, headers: respHeaders });
+          }
+          return new Response(JSON.stringify(respJson), { status, statusText: upstream.statusText, headers: respHeaders });
+        }
+        
+        // ── Protocol translation: v0 API → Chat Completions ──
+        if (isV0Provider) {
+          const respText = await upstream.text();
+          let respJson = safeParseJson(respText);
+          respJson = v0ToChatResponse(respJson, model || "v0-max");
+          if (emulationState.hasTools) respJson = emulateToolsInResponse(respJson, emulationState);
+          
+          respHeaders.set("content-type", "application/json");
+          if (emulationState.hasTools && bodyJson?.stream) {
+            respHeaders.set("content-type", "text/event-stream");
+            respHeaders.set("cache-control", "no-cache");
+            return new Response(generateFakeStream(respJson), { status, statusText: upstream.statusText, headers: respHeaders });
+          }
+          return new Response(JSON.stringify(respJson), { status, statusText: upstream.statusText, headers: respHeaders });
         }
 
+        // ── Transparent Response with optional Tool Emulation ──
         const isSseStream = /text\/event-stream/i.test(
           upstream.headers.get("content-type") || ""
         );
+        
+        if (emulationState.hasTools && !isSseStream) {
+           const respText = await upstream.text();
+           let respJson = safeParseJson(respText);
+           respJson = emulateToolsInResponse(respJson, emulationState);
+           if (bodyJson?.stream) {
+              respHeaders.set("content-type", "text/event-stream");
+              respHeaders.set("cache-control", "no-cache");
+              return new Response(generateFakeStream(respJson), { status, statusText: upstream.statusText, headers: respHeaders });
+           }
+           return new Response(JSON.stringify(respJson), { status, statusText: upstream.statusText, headers: respHeaders });
+        }
+
         if (isSseStream && upstream.body) {
           const sanitized = sanitizeOpenAIStream(upstream.body);
           return new Response(sanitized, {
