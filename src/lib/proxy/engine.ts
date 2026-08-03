@@ -428,7 +428,7 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
             respJson = anthropicToOpenAIResponse(respJson);
             if (emulationState.hasTools) respJson = emulateToolsInResponse(respJson, emulationState);
             
-            if (emulationState.hasTools && bodyJson?.stream) {
+            if (emulationState.hasTools && (bodyJson as any)?.stream) {
               respHeaders.set("content-type", "text/event-stream");
               respHeaders.set("cache-control", "no-cache");
               return new Response(generateFakeStream(respJson), { status, statusText: upstream.statusText, headers: respHeaders });
@@ -445,7 +445,7 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
           if (emulationState.hasTools) respJson = emulateToolsInResponse(respJson, emulationState);
           
           respHeaders.set("content-type", "application/json");
-          if (emulationState.hasTools && bodyJson?.stream) {
+          if (emulationState.hasTools && (bodyJson as any)?.stream) {
             respHeaders.set("content-type", "text/event-stream");
             respHeaders.set("cache-control", "no-cache");
             return new Response(generateFakeStream(respJson), { status, statusText: upstream.statusText, headers: respHeaders });
@@ -461,7 +461,7 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
           if (emulationState.hasTools) respJson = emulateToolsInResponse(respJson, emulationState);
           
           respHeaders.set("content-type", "application/json");
-          if (emulationState.hasTools && bodyJson?.stream) {
+          if (emulationState.hasTools && (bodyJson as any)?.stream) {
             respHeaders.set("content-type", "text/event-stream");
             respHeaders.set("cache-control", "no-cache");
             return new Response(generateFakeStream(respJson), { status, statusText: upstream.statusText, headers: respHeaders });
@@ -478,7 +478,7 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
            const respText = await upstream.text();
            let respJson = safeParseJson(respText);
            respJson = emulateToolsInResponse(respJson, emulationState);
-           if (bodyJson?.stream) {
+           if ((bodyJson as any)?.stream) {
               respHeaders.set("content-type", "text/event-stream");
               respHeaders.set("cache-control", "no-cache");
               return new Response(generateFakeStream(respJson), { status, statusText: upstream.statusText, headers: respHeaders });
