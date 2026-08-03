@@ -30,6 +30,7 @@ const PATH_RULES: Array<{ type: EndpointType; test: RegExp }> = [
   //   /messages (Anthropic), /conversations, /conversation
   { type: "chat", test: /\/chats?\/(completions|messages)$/i },
   { type: "chat", test: /\/chats?$/i },
+  { type: "chat", test: /\/completions$/i },
   { type: "chat", test: /\/messages$/i },
   { type: "chat", test: /\/conversations?$/i },
   { type: "chat", test: /\/ai\/chat/i },
