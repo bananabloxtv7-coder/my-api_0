@@ -10,7 +10,6 @@ import {
   chatToResponsesRequest,
   responsesToChatResponse,
 } from "./responses-translate";
-import { chatToV0Request, v0ToChatResponse } from "./v0-translate";
 import { getCachedProviders, markKeyStateInCache, resetProviderKeysInCache, markKeyInFlight, clearKeyInFlight, isKeyInFlight, type CachedProvider, type CachedKey } from "./cache";
 
 export interface ProxyResult {
@@ -286,7 +285,6 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
       // ── Protocol translation (optional) ──
       const isAnthropicProvider = provider.protocol === "anthropic";
       const isResponsesProvider = provider.protocol === "responses";
-      const isV0Provider = provider.protocol === "v0";
       if (bodyBuffer && method !== "GET" && method !== "HEAD") {
         if (isAnthropicProvider && bodyJson) {
           const translated = openaiToAnthropicRequest(bodyJson);
@@ -298,12 +296,6 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
           // Convert Chat Completions (messages) → Responses API (input)
           const translated = chatToResponsesRequest(bodyJson);
           init.body = JSON.stringify(translated);
-        } else if (isV0Provider && bodyJson) {
-          console.log("[v0] isV0Provider true. calling chatToV0Request");
-          const translated = chatToV0Request(bodyJson);
-          console.log("[v0] translated:", translated);
-          init.body = JSON.stringify(translated);
-          console.log("[v0] stringified body:", init.body);
         } else {
           init.body = bodyBuffer;
         }
@@ -423,19 +415,6 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
           const respText = await upstream.text();
           const respJson = safeParseJson(respText);
           const translated = responsesToChatResponse(respJson);
-          respHeaders.set("content-type", "application/json");
-          return new Response(JSON.stringify(translated), {
-            status,
-            statusText: upstream.statusText,
-            headers: respHeaders,
-          });
-        }
-
-        // ── Protocol translation: v0 API → Chat Completions ──
-        if (isV0Provider) {
-          const respText = await upstream.text();
-          const respJson = safeParseJson(respText);
-          const translated = v0ToChatResponse(respJson, model || "unknown");
           respHeaders.set("content-type", "application/json");
           return new Response(JSON.stringify(translated), {
             status,
