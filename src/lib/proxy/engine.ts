@@ -445,7 +445,7 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
           if (emulationState.hasTools) respJson = emulateToolsInResponse(respJson, emulationState);
           
           respHeaders.set("content-type", "application/json");
-          if (emulationState.hasTools && (bodyJson as any)?.stream) {
+          if ((bodyJson as any)?.stream) {
             respHeaders.set("content-type", "text/event-stream");
             respHeaders.set("cache-control", "no-cache");
             return new Response(generateFakeStream(respJson), { status, statusText: upstream.statusText, headers: respHeaders });
@@ -461,7 +461,7 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
           if (emulationState.hasTools) respJson = emulateToolsInResponse(respJson, emulationState);
           
           respHeaders.set("content-type", "application/json");
-          if (emulationState.hasTools && (bodyJson as any)?.stream) {
+          if ((bodyJson as any)?.stream) {
             respHeaders.set("content-type", "text/event-stream");
             respHeaders.set("cache-control", "no-cache");
             return new Response(generateFakeStream(respJson), { status, statusText: upstream.statusText, headers: respHeaders });
