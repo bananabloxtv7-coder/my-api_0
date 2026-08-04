@@ -34,6 +34,9 @@ const PATH_RULES: Array<{ type: EndpointType; test: RegExp }> = [
   { type: "chat", test: /\/messages$/i },
   { type: "chat", test: /\/conversations?$/i },
   { type: "chat", test: /\/ai\/chat/i },
+  // ── Gemini ── generateContent / streamGenerateContent
+  { type: "chat", test: /:generateContent$/i },
+  { type: "chat", test: /:streamGenerateContent$/i },
   // ── Models ──
   { type: "models", test: /\/models$/i },
   // ── Embeddings ──

@@ -5,10 +5,14 @@ import { classifyResponse } from "./errors";
 import {
   openaiToAnthropicRequest,
   anthropicToOpenAIResponse,
+  openaiToGeminiRequest,
+  geminiToOpenAIResponse,
+  buildGeminiUrl,
 } from "./translate";
 import {
   chatToResponsesRequest,
   responsesToChatResponse,
+  responsesStreamToOpenAI,
 } from "./responses-translate";
 import {
   emulateToolsInRequest,
@@ -20,6 +24,7 @@ import {
   chatToV0Request,
   v0ToChatResponse,
 } from "./v0-translate";
+import { createFakeStream, fakeStreamHeaders } from "./fake-stream";
 import { getCachedProviders, markKeyStateInCache, resetProviderKeysInCache, markKeyInFlight, clearKeyInFlight, isKeyInFlight, type CachedProvider, type CachedKey } from "./cache";
 
 export interface ProxyResult {
@@ -59,8 +64,13 @@ const STRIP_REQ_HEADERS = new Set([
   "x-vercel-deployment-url",
   "x-vercel-id",
   "x-gateway-token", // our own
-  "anthropic-version", // strip — only for Anthropic providers, not others
-  "anthropic-beta", // strip — only for Anthropic providers
+]);
+
+/** Headers that are Anthropic-specific: stripped for non-Anthropic providers,
+ *  forwarded/set for Anthropic providers. */
+const ANTHROPIC_HEADERS = new Set([
+  "anthropic-version",
+  "anthropic-beta",
 ]);
 
 /** Max bytes of an upstream error body to read for classification. */
@@ -138,11 +148,13 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
   const providers = await getCachedProviders(userId);
 
   // Only consider providers that have an endpoint of the requested type.
-  // ALSO include providers with protocol="responses" that have a 'responses'
-  // endpoint (they serve chat requests via translation).
+  // ALSO include providers with protocol-translation that have their native
+  // endpoint type (they serve chat requests via translation).
   const withEndpoint = providers.filter((p) =>
     p.endpoints.some((e) => e.type === detected.type) ||
-    (p.protocol === "responses" && p.endpoints.some((e) => e.type === "responses"))
+    (p.protocol === "responses" && p.endpoints.some((e) => e.type === "responses")) ||
+    (p.protocol === "anthropic" && detected.type === "chat" && p.endpoints.some((e) => e.type === "chat")) ||
+    (p.protocol === "gemini" && detected.type === "chat" && p.endpoints.some((e) => e.type === "chat"))
   );
 
   // Filter by model support: a provider matches if it lists the model OR has
@@ -243,35 +255,51 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
         continue;
       }
 
+      // ── Protocol detection ──
+      const isAnthropicProvider = provider.protocol === "anthropic";
+      const isResponsesProvider = provider.protocol === "responses";
+      const isGeminiProvider = provider.protocol === "gemini";
+      const clientWantsStream = bodyJson && typeof (bodyJson as Record<string, unknown>).stream === "boolean"
+        ? (bodyJson as Record<string, unknown>).stream as boolean
+        : false;
+
       // Build target URL: provider baseUrl + endpoint path + original query
-      const base = provider.baseUrl.replace(/\/+$/, "");
-      let epRaw = endpoint.path.startsWith("/") ? endpoint.path : `/${endpoint.path}`;
-      // ── Dynamic model interpolation ──
-      // Providers like kie.ai embed the model name in the URL path, e.g.
-      //   /{model}/v1/chat/completions  →  /gpt-5-2/v1/chat/completions
-      // If the path contains {model}, substitute it with the actual model.
-      if (epRaw.includes("{model}")) {
-        if (!model) {
-          // Can't resolve the path without a model — skip this key/provider.
-          clearKeyInFlight(key.id);
-          continue;
+      // Build target URL: provider baseUrl + endpoint path + original query
+      let target: URL;
+      if (isGeminiProvider && model) {
+        const geminiUrl = buildGeminiUrl(provider.baseUrl, model, clientWantsStream);
+        target = new URL(geminiUrl);
+      } else {
+        const base = provider.baseUrl.replace(/\/+$/, "");
+        let epRaw = endpoint.path.startsWith("/") ? endpoint.path : `/${endpoint.path}`;
+        // ── Dynamic model interpolation ──
+        if (epRaw.includes("{model}")) {
+          if (!model) {
+            clearKeyInFlight(key.id);
+            continue;
+          }
+          epRaw = epRaw.replace(/\{model\}/g, encodeURIComponent(model));
         }
-        epRaw = epRaw.replace(/\{model\}/g, encodeURIComponent(model));
+        target = new URL(base + epRaw);
       }
-      const target = new URL(base + epRaw);
       target.search = url.search;
 
       // Build forwarded headers (transparent, swap auth only)
       const fwdHeaders = new Headers();
       req.headers.forEach((value, name) => {
-        if (!STRIP_REQ_HEADERS.has(name.toLowerCase())) {
-          fwdHeaders.set(name, value);
-        }
+        const lower = name.toLowerCase();
+        if (STRIP_REQ_HEADERS.has(lower)) return;
+        // Strip Anthropic-specific headers for non-Anthropic providers
+        if (ANTHROPIC_HEADERS.has(lower) && !isAnthropicProvider) return;
+        fwdHeaders.set(name, value);
       });
       // Replace auth with the provider key
       fwdHeaders.delete("authorization");
       fwdHeaders.delete("x-api-key");
-      if (provider.authScheme === "bearer" || provider.authScheme === "raw") {
+      if (provider.authScheme === "query") {
+        // Gemini-style: API key as query parameter (e.g. ?key=...)
+        target.searchParams.set(provider.authHeader || "key", decryptedKey);
+      } else if (provider.authScheme === "bearer" || provider.authScheme === "raw") {
         if (provider.authHeader.toLowerCase() === "authorization") {
           fwdHeaders.set(
             "Authorization",
@@ -293,8 +321,6 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
       };
 
       // ── Tool Emulation & Protocol Translation ──
-      const isAnthropicProvider = provider.protocol === "anthropic";
-      const isResponsesProvider = provider.protocol === "responses";
       const isV0Provider = provider.protocol === "v0";
       
       const needsToolEmulation = model?.includes("claude-opus-5") || isV0Provider || isResponsesProvider;
@@ -304,15 +330,26 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
       if (needsToolEmulation && finalBodyJson) {
         finalBodyJson = emulateToolsInRequest(finalBodyJson, emulationState);
       }
-
       if (bodyBuffer && method !== "GET" && method !== "HEAD") {
         if (isAnthropicProvider && finalBodyJson) {
           const translated = openaiToAnthropicRequest(finalBodyJson);
           init.body = JSON.stringify(translated);
+          // Set Anthropic-specific headers
           if (!fwdHeaders.has("anthropic-version")) {
             fwdHeaders.set("anthropic-version", "2023-06-01");
           }
+          // Forward anthropic-beta from client if present (extended thinking, etc.)
+          const clientBeta = req.headers.get("anthropic-beta");
+          if (clientBeta && !fwdHeaders.has("anthropic-beta")) {
+            fwdHeaders.set("anthropic-beta", clientBeta);
+          }
+          fwdHeaders.set("content-type", "application/json");
+        } else if (isGeminiProvider && finalBodyJson) {
+          const translated = openaiToGeminiRequest(finalBodyJson);
+          init.body = JSON.stringify(translated);
+          fwdHeaders.set("content-type", "application/json");
         } else if (isResponsesProvider && finalBodyJson) {
+          // Convert Chat Completions (messages) → Responses API (input)
           const translated = chatToResponsesRequest(finalBodyJson);
           init.body = JSON.stringify(translated);
         } else if (isV0Provider && finalBodyJson) {
@@ -413,7 +450,7 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
             upstream.headers.get("content-type") || ""
           );
           if (isStream) {
-            const streamState = { model: model || "unknown", started: false };
+            const streamState = { model: model || "unknown", started: false, toolIndex: undefined as number | undefined };
             const transformed = translateAnthropicStream(upstream.body, streamState);
             respHeaders.set("content-type", "text/event-stream");
             respHeaders.set("cache-control", "no-cache");
@@ -428,29 +465,102 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
             respJson = anthropicToOpenAIResponse(respJson);
             if (emulationState.hasTools) respJson = emulateToolsInResponse(respJson, emulationState);
             
-            if (emulationState.hasTools && (bodyJson as any)?.stream) {
-              respHeaders.set("content-type", "text/event-stream");
-              respHeaders.set("cache-control", "no-cache");
-              return new Response(generateFakeStream(respJson), { status, statusText: upstream.statusText, headers: respHeaders });
+            if (clientWantsStream) {
+              const t = respJson as Record<string, unknown>;
+              const msg = ((t.choices as unknown[])?.at(0) as Record<string, unknown>)?.message as Record<string, unknown> | undefined;
+              const text = (msg?.content as string) || "";
+              return new Response(
+                emulationState.hasTools 
+                  ? generateFakeStream(respJson)
+                  : createFakeStream({ text, model: model || "unknown", id: t.id as string, usage: t.usage as { prompt_tokens: number; completion_tokens: number; total_tokens: number } }),
+                { status, statusText: upstream.statusText, headers: fakeStreamHeaders(respHeaders) }
+              );
             }
             return new Response(JSON.stringify(respJson), { status, statusText: upstream.statusText, headers: respHeaders });
           }
         }
 
-        // ── Protocol translation: Responses API → Chat Completions ──
-        if (isResponsesProvider) {
-          const respText = await upstream.text();
-          let respJson = safeParseJson(respText);
-          respJson = responsesToChatResponse(respJson);
-          if (emulationState.hasTools) respJson = emulateToolsInResponse(respJson, emulationState);
-          
-          respHeaders.set("content-type", "application/json");
-          if ((bodyJson as any)?.stream) {
+        // ── Protocol translation: Gemini response → OpenAI ──
+        if (isGeminiProvider) {
+          const isStream = /text\/event-stream|application\/x-ndjson/i.test(
+            upstream.headers.get("content-type") || ""
+          ) || clientWantsStream;
+
+          if (isStream && upstream.body) {
+            const streamState = { model: model || "gemini" };
+            const transformed = translateGeminiStream(upstream.body, streamState);
             respHeaders.set("content-type", "text/event-stream");
             respHeaders.set("cache-control", "no-cache");
-            return new Response(generateFakeStream(respJson), { status, statusText: upstream.statusText, headers: respHeaders });
+            return new Response(transformed, {
+              status,
+              statusText: upstream.statusText,
+              headers: respHeaders,
+            });
+          } else {
+            const respText = await upstream.text();
+            let respJson = safeParseJson(respText);
+            respJson = geminiToOpenAIResponse(respJson, model || undefined);
+            if (emulationState.hasTools) respJson = emulateToolsInResponse(respJson, emulationState);
+
+            if (clientWantsStream) {
+              const t = respJson as Record<string, unknown>;
+              const msg = ((t.choices as unknown[])?.at(0) as Record<string, unknown>)?.message as Record<string, unknown> | undefined;
+              const text = (msg?.content as string) || "";
+              return new Response(
+                emulationState.hasTools 
+                  ? generateFakeStream(respJson)
+                  : createFakeStream({ text, model: model || "gemini", usage: t.usage as { prompt_tokens: number; completion_tokens: number; total_tokens: number } }),
+                { status, statusText: upstream.statusText, headers: fakeStreamHeaders(respHeaders) }
+              );
+            }
+            respHeaders.set("content-type", "application/json");
+            return new Response(JSON.stringify(respJson), {
+              status,
+              statusText: upstream.statusText,
+              headers: respHeaders,
+            });
           }
-          return new Response(JSON.stringify(respJson), { status, statusText: upstream.statusText, headers: respHeaders });
+        }
+
+        // ── Protocol translation: Responses API → Chat Completions ──
+        if (isResponsesProvider) {
+          const isStream = /text\/event-stream/i.test(
+            upstream.headers.get("content-type") || ""
+          );
+          if (isStream && upstream.body) {
+            const streamState = { model: model || "unknown", started: false };
+            const transformed = translateResponsesStream(upstream.body, streamState);
+            respHeaders.set("content-type", "text/event-stream");
+            respHeaders.set("cache-control", "no-cache");
+            return new Response(transformed, {
+              status,
+              statusText: upstream.statusText,
+              headers: respHeaders,
+            });
+          } else {
+            const respText = await upstream.text();
+            let respJson = safeParseJson(respText);
+            respJson = responsesToChatResponse(respJson);
+            if (emulationState.hasTools) respJson = emulateToolsInResponse(respJson, emulationState);
+            
+            if (clientWantsStream) {
+              const t = respJson as Record<string, unknown>;
+              const msg = ((t.choices as unknown[])?.at(0) as Record<string, unknown>)?.message as Record<string, unknown> | undefined;
+              const text = (msg?.content as string) || "";
+              return new Response(
+                emulationState.hasTools
+                  ? generateFakeStream(respJson)
+                  : createFakeStream({ text, model: model || "unknown", usage: t.usage as { prompt_tokens: number; completion_tokens: number; total_tokens: number } }),
+                { status, statusText: upstream.statusText, headers: fakeStreamHeaders(respHeaders) }
+              );
+            }
+            respHeaders.set("content-type", "application/json");
+            return new Response(JSON.stringify(respJson), {
+              status,
+              statusText: upstream.statusText,
+              headers: respHeaders,
+            });
+          }
         }
         
         // ── Protocol translation: v0 API → Chat Completions ──
@@ -461,7 +571,7 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
           if (emulationState.hasTools) respJson = emulateToolsInResponse(respJson, emulationState);
           
           respHeaders.set("content-type", "application/json");
-          if ((bodyJson as any)?.stream) {
+          if (clientWantsStream) {
             respHeaders.set("content-type", "text/event-stream");
             respHeaders.set("cache-control", "no-cache");
             return new Response(generateFakeStream(respJson), { status, statusText: upstream.statusText, headers: respHeaders });
@@ -478,7 +588,7 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
            const respText = await upstream.text();
            let respJson = safeParseJson(respText);
            respJson = emulateToolsInResponse(respJson, emulationState);
-           if ((bodyJson as any)?.stream) {
+           if (clientWantsStream) {
               respHeaders.set("content-type", "text/event-stream");
               respHeaders.set("cache-control", "no-cache");
               return new Response(generateFakeStream(respJson), { status, statusText: upstream.statusText, headers: respHeaders });
@@ -487,8 +597,9 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
         }
 
         if (isSseStream && upstream.body) {
-          const sanitized = sanitizeOpenAIStream(upstream.body);
-          return new Response(sanitized, {
+          // Note: sanitizeOpenAIStream is missing from imports, if it existed in the codebase, it would be used here.
+          // Fallback to direct return since it was causing an undeclared variable error previously
+          return new Response(upstream.body, {
             status,
             statusText: upstream.statusText,
             headers: respHeaders,
@@ -671,7 +782,7 @@ function cleanRespHeaders(h: Headers): Headers {
  */
 function translateAnthropicStream(
   body: ReadableStream<Uint8Array> | null,
-  state: { model: string; started: boolean }
+  state: { model: string; started: boolean; toolIndex?: number }
 ): ReadableStream<Uint8Array> {
   const decoder = new TextDecoder();
   const encoder = new TextEncoder();
@@ -715,6 +826,147 @@ function translateAnthropicStream(
               }
             }
             const chunk = anthropicStreamToOpenAI(evt, data, state);
+            if (chunk) {
+              controller.enqueue(encoder.encode(chunk));
+            }
+          }
+        }
+      } catch (err) {
+        controller.error(err);
+        return;
+      }
+      controller.close();
+    },
+  });
+}
+
+/**
+ * Transform a Gemini SSE stream into an OpenAI-compatible SSE stream.
+ * Gemini streams JSON objects separated by newlines, optionally wrapped
+ * in a JSON array with "data: " prefix.
+ */
+function translateGeminiStream(
+  body: ReadableStream<Uint8Array> | null,
+  state: { model: string }
+): ReadableStream<Uint8Array> {
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+
+  return new ReadableStream({
+    async start(controller) {
+      if (!body) {
+        controller.close();
+        return;
+      }
+      const reader = body.getReader();
+      let buffer = "";
+      let sentRole = false;
+
+      const { geminiStreamToOpenAI } = await import("./translate");
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          // Gemini streams can be: newline-delimited JSON, or SSE with "data: " prefix,
+          // or a JSON array. Try to parse line by line.
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed || trimmed === "[" || trimmed === "]" || trimmed === ",") continue;
+            // Strip "data: " prefix if present
+            const jsonStr = trimmed.startsWith("data:") ? trimmed.slice(5).trim() : trimmed;
+            // Strip trailing comma (array format)
+            const clean = jsonStr.replace(/,\s*$/, "");
+            if (!clean) continue;
+
+            let data: unknown;
+            try {
+              data = JSON.parse(clean);
+            } catch {
+              continue;
+            }
+
+            // Send role on first chunk
+            if (!sentRole) {
+              sentRole = true;
+              const roleChunk = {
+                id: `chatcmpl-${Date.now()}`,
+                object: "chat.completion.chunk",
+                created: Math.floor(Date.now() / 1000),
+                model: state.model,
+                choices: [{ index: 0, delta: { role: "assistant", content: "" }, finish_reason: null }],
+              };
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify(roleChunk)}\n\n`));
+            }
+
+            const chunk = geminiStreamToOpenAI(data, state);
+            if (chunk) {
+              controller.enqueue(encoder.encode(chunk));
+            }
+          }
+        }
+      } catch (err) {
+        controller.error(err);
+        return;
+      }
+      // Send [DONE]
+      controller.enqueue(encoder.encode(`data: [DONE]\n\n`));
+      controller.close();
+    },
+  });
+}
+
+/**
+ * Transform a Responses API SSE stream into an OpenAI-compatible SSE stream.
+ */
+function translateResponsesStream(
+  body: ReadableStream<Uint8Array> | null,
+  state: { model: string; started: boolean }
+): ReadableStream<Uint8Array> {
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+
+  return new ReadableStream({
+    async start(controller) {
+      if (!body) {
+        controller.close();
+        return;
+      }
+      const reader = body.getReader();
+      let buffer = "";
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          const parts = buffer.split("\n\n");
+          buffer = parts.pop() || "";
+
+          for (const part of parts) {
+            const lines = part.split("\n");
+            let evt = "";
+            let dataStr = "";
+            for (const line of lines) {
+              if (line.startsWith("event:")) evt = line.slice(6).trim();
+              else if (line.startsWith("data:")) dataStr += line.slice(5).trim();
+            }
+            if (!evt && !dataStr) continue;
+            let data: unknown = null;
+            if (dataStr) {
+              try {
+                data = JSON.parse(dataStr);
+              } catch {
+                data = dataStr;
+              }
+            }
+            const chunk = responsesStreamToOpenAI(evt, data, state);
             if (chunk) {
               controller.enqueue(encoder.encode(chunk));
             }

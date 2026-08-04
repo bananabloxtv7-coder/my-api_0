@@ -108,11 +108,10 @@ export function chatToResponsesRequest(body: unknown): unknown {
   };
 
   if (typeof src.max_tokens === "number") out.max_output_tokens = src.max_tokens;
-  // Force stream=false — we convert the full response. Streaming Responses
-  // API uses a different SSE format than Chat Completions, so passing
-  // stream=true would return Responses-formatted chunks that tools can't
-  // parse. We always get the full response and convert it.
-  out.stream = false;
+
+  // Preserve the client's stream preference. The engine will handle
+  // stream translation via responsesStreamToOpenAI() if streaming is on.
+  if (typeof src.stream === "boolean") out.stream = src.stream;
 
   return out;
 }
@@ -190,4 +189,69 @@ export function responsesToChatResponse(body: unknown): unknown {
     },
     system_fingerprint: src.system_fingerprint ?? null,
   };
+}
+
+/**
+ * Convert a Responses API SSE stream event into OpenAI Chat Completions
+ * streaming chunks.
+ *
+ * Responses API stream events:
+ *   response.output_text.delta  → { delta: "..." }   (text chunk)
+ *   response.output_text.done   → { text: "..." }    (final text)
+ *   response.completed          → { ... }             (full response)
+ *
+ * We map these to OpenAI "chat.completion.chunk" format.
+ */
+export function responsesStreamToOpenAI(
+  event: string,
+  data: unknown,
+  state: { model: string; started: boolean }
+): string | null {
+  const model = state.model;
+  const id = `chatcmpl-${Date.now()}`;
+  const created = Math.floor(Date.now() / 1000);
+
+  // First event: send role
+  if (!state.started && (event === "response.created" || event === "response.output_item.added" || event === "response.output_text.delta")) {
+    state.started = true;
+    const roleChunk = {
+      id, object: "chat.completion.chunk", created, model,
+      choices: [{ index: 0, delta: { role: "assistant", content: "" }, finish_reason: null }],
+    };
+    // If this is also a delta event, include the text
+    if (event === "response.output_text.delta") {
+      const d = data as Record<string, unknown>;
+      const text = (d?.delta as string) ?? "";
+      if (text) {
+        const textChunk = {
+          id, object: "chat.completion.chunk", created, model,
+          choices: [{ index: 0, delta: { content: text }, finish_reason: null }],
+        };
+        return `data: ${JSON.stringify(roleChunk)}\n\ndata: ${JSON.stringify(textChunk)}\n\n`;
+      }
+    }
+    return `data: ${JSON.stringify(roleChunk)}\n\n`;
+  }
+
+  // Text delta
+  if (event === "response.output_text.delta") {
+    const d = data as Record<string, unknown>;
+    const text = (d?.delta as string) ?? "";
+    if (!text) return null;
+    return `data: ${JSON.stringify({
+      id, object: "chat.completion.chunk", created, model,
+      choices: [{ index: 0, delta: { content: text }, finish_reason: null }],
+    })}\n\n`;
+  }
+
+  // Completion done
+  if (event === "response.completed" || event === "response.done") {
+    const finalChunk = {
+      id, object: "chat.completion.chunk", created, model,
+      choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+    };
+    return `data: ${JSON.stringify(finalChunk)}\n\ndata: [DONE]\n\n`;
+  }
+
+  return null;
 }
