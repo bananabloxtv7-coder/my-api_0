@@ -297,6 +297,12 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
       } else {
         const base = provider.baseUrl.replace(/\/+$/, "");
         let epRaw = endpoint.path.startsWith("/") ? endpoint.path : `/${endpoint.path}`;
+        
+        // ── Auto-correct double /v1/ from dashboard misconfigurations ──
+        if (base.endsWith("/v1") && epRaw.startsWith("/v1/")) {
+          epRaw = epRaw.substring(3);
+        }
+
         // ── Dynamic model interpolation ──
         if (epRaw.includes("{model}")) {
           if (!model) {
