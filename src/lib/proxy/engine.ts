@@ -147,6 +147,31 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
   // ── 4. Discover candidate providers (from cache — hot path) ───────
   const providers = await getCachedProviders(userId);
 
+  // ── Intercept /models endpoint ───────────────────────────────────
+  if (detected.type === "models") {
+    const uniqueModels = new Set<string>();
+    for (const p of providers) {
+      for (const m of p.models) {
+        uniqueModels.add(m.name);
+      }
+    }
+    
+    const data = Array.from(uniqueModels).map((id) => ({
+      id,
+      object: "model",
+      created: Math.floor(Date.now() / 1000),
+      owned_by: "smart-gateway",
+    }));
+
+    return new Response(JSON.stringify({ object: "list", data }), {
+      status: 200,
+      headers: {
+        "Content-Type": "application/json",
+        "Access-Control-Allow-Origin": "*",
+      },
+    });
+  }
+
   // Only consider providers that have an endpoint of the requested type.
   // ALSO include providers with protocol-translation that have their native
   // endpoint type (they serve chat requests via translation).
