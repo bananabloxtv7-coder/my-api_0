@@ -393,18 +393,28 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
         }
       }
 
-      // Provider timeout (max 12s so Vercel 15s function limit isn't exceeded, allowing fast failover)
+      // Provider timeout for initial connection (TTFB). Fast failover if dead.
+      // We do NOT use AbortSignal.timeout because it applies to the entire request and aborts the stream midway.
       const timeoutMs = Math.min(Math.max(provider.timeoutMs || 12000, 3000), 12000);
+      const controller = new AbortController();
+      let timeoutId: ReturnType<typeof setTimeout> | undefined;
       try {
-        init.signal = AbortSignal.timeout(timeoutMs);
+        timeoutId = setTimeout(() => {
+          const err = new Error("TimeoutError");
+          err.name = "TimeoutError";
+          controller.abort(err);
+        }, timeoutMs);
+        init.signal = controller.signal;
       } catch {
-        // AbortSignal.timeout may be unavailable in very old runtimes.
+        // Fallback for very old runtimes
       }
 
       let upstream: Response;
       try {
         upstream = await fetch(target.toString(), init);
+        if (timeoutId) clearTimeout(timeoutId);
       } catch (err) {
+        if (timeoutId) clearTimeout(timeoutId);
         // network error / timeout — fire-and-forget the DB write, move on NOW
         clearKeyInFlight(key.id);
         const isTimeout =
