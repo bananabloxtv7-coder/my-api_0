@@ -160,12 +160,66 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
   // ── Intercept /models endpoint ───────────────────────────────────
   if (detected.type === "models") {
     const uniqueModels = new Set<string>();
+    // 1. Add explicitly configured models
     for (const p of providers) {
       for (const m of p.models) {
         uniqueModels.add(m.name);
       }
     }
     
+    // 2. Auto-discover models from upstream providers concurrently
+    const fetchPromises = providers.map(async (provider) => {
+      // Need at least one active key to fetch models
+      const key = provider.apiKeys.find(k => k.isActive && k.status === "active");
+      if (!key) return;
+
+      const base = provider.baseUrl.replace(/\/+$/, "");
+      let url = `${base}/models`; // Default OpenAI-compatible models endpoint
+      
+      const fwdHeaders = new Headers();
+      try {
+        const decryptedKey = decrypt(key.encryptedKey);
+        
+        // Build auth headers based on scheme
+        if (provider.authScheme === "bearer" || provider.authScheme === "raw") {
+          if (provider.authHeader.toLowerCase() === "authorization") {
+            fwdHeaders.set("Authorization", provider.authScheme === "bearer" ? `Bearer ${decryptedKey}` : decryptedKey);
+          } else {
+            fwdHeaders.set(provider.authHeader, decryptedKey);
+          }
+        } else if (provider.authScheme === "x-api-key") {
+          fwdHeaders.set("x-api-key", decryptedKey);
+        } else if (provider.authScheme === "query") {
+           url += `?${provider.authHeader || "key"}=${decryptedKey}`;
+        } else {
+          fwdHeaders.set(provider.authHeader, decryptedKey);
+        }
+
+        // 5 second timeout to prevent the /models endpoint from hanging
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        
+        const res = await fetch(url, { headers: fwdHeaders, signal: controller.signal });
+        clearTimeout(timeoutId);
+        
+        if (res.ok) {
+          const json = await res.json();
+          // Assuming OpenAI format: { object: "list", data: [{ id: "model-name" }] }
+          if (json && Array.isArray(json.data)) {
+            json.data.forEach((m: any) => {
+              if (m && typeof m.id === "string") {
+                uniqueModels.add(m.id);
+              }
+            });
+          }
+        }
+      } catch (e) {
+        // Ignore timeouts or unsupported endpoints silently
+      }
+    });
+
+    await Promise.allSettled(fetchPromises);
+
     const data = Array.from(uniqueModels).map((id) => ({
       id,
       object: "model",
