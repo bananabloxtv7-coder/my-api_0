@@ -117,11 +117,6 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
     }
   }
 
-  // ── Auto-replace broken/old Pi key with the new active key ──
-  if (masterKeyRaw === "gw_c5b62e_2sML7pyPjH7LzKXU27qicm-X0kvULPG9") {
-    masterKeyRaw = "gw_fa6eea_slinkbeyXPp4V1t-Aq0PasCzLOk-osVR";
-  }
-
   const meta: ProxyResult["meta"] = {
     providerId: null,
     providerKeyId: null,
