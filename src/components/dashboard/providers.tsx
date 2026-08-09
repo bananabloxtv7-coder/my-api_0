@@ -1249,6 +1249,18 @@ function ModelsManager({
     onError: (e) => toast.error((e as Error).message),
   });
 
+  const discoverMut = useMutation({
+    mutationFn: () =>
+      api.post(`/api/providers/${providerId}/models`, { action: "discover" }),
+    onSuccess: (res: any) => {
+      qc.invalidateQueries({ queryKey: ["provider", providerId] });
+      qc.invalidateQueries({ queryKey: ["providers"] });
+      qc.invalidateQueries({ queryKey: ["stats"] });
+      toast.success(`تم اكتشاف وتخزين ${res.count || res.models?.length || 0} نموذج بنجاح!`);
+    },
+    onError: (e) => toast.error((e as Error).message),
+  });
+
   const delMut = useMutation({
     mutationFn: (id: string) => api.del(`/api/providers/${providerId}/models?modelId=${id}`),
     onSuccess: () => {
@@ -1262,10 +1274,26 @@ function ModelsManager({
 
   return (
     <div className="space-y-3">
-      <div className="text-sm text-muted-foreground">
-        {models.length === 0
-          ? "لا توجد نماذج محددة — المزود يدعم أي نموذج (Wildcard)."
-          : `${models.length} نموذج`}
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="text-sm text-muted-foreground">
+          {models.length === 0
+            ? "لا توجد نماذج محددة — المزود يدعم أي نموذج (Wildcard)."
+            : `${models.length} نموذج`}
+        </div>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => discoverMut.mutate()}
+          disabled={discoverMut.isPending}
+          className="shrink-0"
+        >
+          {discoverMut.isPending ? (
+            <Loader2 className="w-4 h-4 ml-1 animate-spin" />
+          ) : (
+            <RefreshCw className="w-4 h-4 ml-1" />
+          )}
+          استكشاف النماذج تلقائياً
+        </Button>
       </div>
 
       <div className="flex gap-2">

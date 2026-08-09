@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
 import { invalidateUserCache } from "@/lib/proxy/cache";
+import { decrypt } from "@/lib/crypto";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -27,7 +28,7 @@ export async function GET(
   return Response.json({ models });
 }
 
-/** POST /api/providers/[id]/models — add a model (or batch) */
+/** POST /api/providers/[id]/models — add a model (or batch, or auto-discover) */
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -38,17 +39,102 @@ export async function POST(
 
   const provider = await db.provider.findFirst({
     where: { id, userId: user.id },
-    select: { id: true },
+    include: { apiKeys: { where: { isActive: true, status: "active" } } },
   });
   if (!provider) return Response.json({ error: "Not found" }, { status: 404 });
 
-  let body: { name?: string; models?: string[] };
+  let body: { action?: string; name?: string; models?: string[] };
   try {
     body = await req.json();
   } catch {
     return Response.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
+  // ── Auto-discovery Mode ──
+  if (body.action === "discover") {
+    const keyItem = provider.apiKeys[0];
+    if (!keyItem) {
+      return Response.json(
+        { error: "لا يوجد مفتاح API نشط لهذا المزود. يرجى إضافة مفتاح أولاً." },
+        { status: 400 }
+      );
+    }
+
+    const base = provider.baseUrl.replace(/\/+$/, "");
+    let url = `${base}/models`;
+    const fwdHeaders = new Headers();
+
+    try {
+      const decryptedKey = decrypt(keyItem.encryptedKey);
+
+      if (provider.authScheme === "bearer" || provider.authScheme === "raw") {
+        if (provider.authHeader.toLowerCase() === "authorization") {
+          fwdHeaders.set(
+            "Authorization",
+            provider.authScheme === "bearer" ? `Bearer ${decryptedKey}` : decryptedKey
+          );
+        } else {
+          fwdHeaders.set(provider.authHeader, decryptedKey);
+        }
+      } else if (provider.authScheme === "x-api-key") {
+        fwdHeaders.set("x-api-key", decryptedKey);
+      } else if (provider.authScheme === "query") {
+        url += `?${provider.authHeader || "key"}=${decryptedKey}`;
+      } else {
+        fwdHeaders.set(provider.authHeader, decryptedKey);
+      }
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
+      const res = await fetch(url, { headers: fwdHeaders, signal: controller.signal });
+      clearTimeout(timeoutId);
+
+      if (!res.ok) {
+        return Response.json(
+          { error: `فشل الاتصال بالمزود (${res.status} ${res.statusText})` },
+          { status: 400 }
+        );
+      }
+
+      const json = await res.json();
+      const discoveredNames: string[] = [];
+
+      if (json && Array.isArray(json.data)) {
+        json.data.forEach((m: any) => {
+          if (m && typeof m.id === "string") {
+            discoveredNames.push(m.id.trim());
+          }
+        });
+      }
+
+      if (discoveredNames.length === 0) {
+        return Response.json(
+          { error: "لم يتم العثور على نماذج في استجابة المزود" },
+          { status: 400 }
+        );
+      }
+
+      const created: Array<{ id: string; name: string }> = [];
+      for (const name of discoveredNames) {
+        const m = await db.model.upsert({
+          where: { providerId_name: { providerId: id, name } },
+          update: { isActive: true },
+          create: { providerId: id, name },
+        });
+        created.push({ id: m.id, name: m.name });
+      }
+
+      invalidateUserCache(user.id);
+      return Response.json({ models: created, count: created.length }, { status: 200 });
+    } catch (err: any) {
+      return Response.json(
+        { error: `فشل استكشاف النماذج: ${err.message || err}` },
+        { status: 500 }
+      );
+    }
+  }
+
+  // ── Manual Addition Mode ──
   const names = body.models
     ? body.models.map((m) => m.trim()).filter(Boolean)
     : body.name
