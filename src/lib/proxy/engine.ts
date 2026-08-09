@@ -101,12 +101,20 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
   const authHeader = req.headers.get("authorization");
   const xApiKey = req.headers.get("x-api-key");
   let masterKeyRaw: string | null = null;
+  
   if (authHeader && /bearer/i.test(authHeader)) {
     masterKeyRaw = authHeader.replace(/^bearer\s+/i, "").trim();
   } else if (authHeader) {
     masterKeyRaw = authHeader.trim();
-  } else if (xApiKey) {
-    masterKeyRaw = xApiKey.trim();
+  }
+  
+  // Fallback to x-api-key if Authorization header was missing, empty, or stringified null/undefined
+  if (!masterKeyRaw || masterKeyRaw === "undefined" || masterKeyRaw === "null") {
+    if (xApiKey && xApiKey.trim() !== "undefined" && xApiKey.trim() !== "null" && xApiKey.trim() !== "") {
+      masterKeyRaw = xApiKey.trim();
+    } else {
+      masterKeyRaw = null; // Normalize empty values to null
+    }
   }
 
   const meta: ProxyResult["meta"] = {
@@ -120,6 +128,7 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
   };
 
   if (!masterKeyRaw) {
+    console.error(`[AUTH FAILED] Missing key. Headers received:`, JSON.stringify(Object.fromEntries(req.headers.entries()), null, 2));
     return jsonError(401, "Missing API key. Send it via Authorization: Bearer <key> or x-api-key.", meta);
   }
 
@@ -128,7 +137,8 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
     select: { id: true, userId: true, isActive: true },
   });
   if (!masterKey || !masterKey.isActive) {
-    return jsonError(401, "Invalid or disabled API key.", meta);
+    console.error(`[AUTH FAILED] Invalid key. masterKeyRaw received: "${masterKeyRaw}" (length: ${masterKeyRaw.length}). Headers:`, JSON.stringify(Object.fromEntries(req.headers.entries()), null, 2));
+    return jsonError(401, `Invalid or disabled API key. Received: "${masterKeyRaw}"`, meta);
   }
 
   const userId = masterKey.userId;
@@ -638,9 +648,7 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
         }
 
         if (isSseStream && upstream.body) {
-          // Note: sanitizeOpenAIStream is missing from imports, if it existed in the codebase, it would be used here.
-          // Fallback to direct return since it was causing an undeclared variable error previously
-          return new Response(upstream.body, {
+          return new Response(sanitizeOpenAIStream(upstream.body), {
             status,
             statusText: upstream.statusText,
             headers: respHeaders,

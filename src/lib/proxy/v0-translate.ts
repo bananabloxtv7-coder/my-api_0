@@ -81,8 +81,12 @@ export function v0ToChatResponse(body: unknown, model: string): unknown {
   } else if (Array.isArray(src.messages)) {
     // Try to extract text from the last assistant message
     const lastMsg = src.messages[src.messages.length - 1];
-    if (lastMsg && typeof lastMsg === "object" && typeof lastMsg.text === "string") {
-      text = lastMsg.text;
+    if (lastMsg && typeof lastMsg === "object") {
+      if (typeof lastMsg.content === "string") {
+        text = lastMsg.content;
+      } else if (typeof lastMsg.text === "string") {
+        text = lastMsg.text;
+      }
     }
   }
 
