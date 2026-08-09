@@ -97,7 +97,21 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
   const url = new URL(req.url);
   const path = url.pathname;
 
-  // ── 1. Authenticate via master API key ────────────────────────────
+  const meta: ProxyResult["meta"] = {
+    providerId: null,
+    providerKeyId: null,
+    providerName: null,
+    model: null,
+    endpointType: "custom",
+    retried: 0,
+    success: false,
+  };
+
+  // ── 1. Detect endpoint type ───────────────────────────────────────
+  const detected = detectEndpointType(path);
+  meta.endpointType = detected.type;
+
+  // ── 2. Authenticate via master API key ────────────────────────────
   const authHeader = req.headers.get("authorization");
   const xApiKey = req.headers.get("x-api-key");
   let masterKeyRaw: string | null = null;
@@ -117,48 +131,68 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
     }
   }
 
-  const meta: ProxyResult["meta"] = {
-    providerId: null,
-    providerKeyId: null,
-    providerName: null,
-    model: null,
-    endpointType: "custom",
-    retried: 0,
-    success: false,
-  };
-
-  if (!masterKeyRaw) {
-    console.error(`[AUTH FAILED] Missing key. Headers received:`, JSON.stringify(Object.fromEntries(req.headers.entries()), null, 2));
-    return jsonError(401, "Missing API key. Send it via Authorization: Bearer <key> or x-api-key.", meta);
+  let masterKey: { id: string; userId: string; isActive: boolean } | null = null;
+  if (masterKeyRaw) {
+    masterKey = await db.masterApiKey.findUnique({
+      where: { keyHash: sha256(masterKeyRaw) },
+      select: { id: true, userId: true, isActive: true },
+    });
   }
 
-  const masterKey = await db.masterApiKey.findUnique({
-    where: { keyHash: sha256(masterKeyRaw) },
-    select: { id: true, userId: true, isActive: true },
-  });
-  if (!masterKey || !masterKey.isActive) {
-    console.error(`[AUTH FAILED] Invalid key. masterKeyRaw received: "${masterKeyRaw}" (length: ${masterKeyRaw.length}). Headers:`, JSON.stringify(Object.fromEntries(req.headers.entries()), null, 2));
-    return jsonError(401, `Invalid or disabled API key. Received: "${masterKeyRaw}"`, meta);
+  // Bypass auth ONLY for /models endpoint so model discovery never 401s
+  if (detected.type !== "models") {
+    if (!masterKeyRaw) {
+      console.error(`[AUTH FAILED] Missing key. Headers received:`, JSON.stringify(Object.fromEntries(req.headers.entries()), null, 2));
+      return jsonError(401, "Missing API key. Send it via Authorization: Bearer <key> or x-api-key.", meta);
+    }
+    if (!masterKey || !masterKey.isActive) {
+      console.error(`[AUTH FAILED] Invalid key. masterKeyRaw received: "${masterKeyRaw}" (length: ${masterKeyRaw.length}). Headers:`, JSON.stringify(Object.fromEntries(req.headers.entries()), null, 2));
+      return jsonError(401, `Invalid or disabled API key. Received: "${masterKeyRaw}"`, meta);
+    }
   }
-
-  const userId = masterKey.userId;
-
-  // ── 2. Detect endpoint type ───────────────────────────────────────
-  const detected = detectEndpointType(path);
-  meta.endpointType = detected.type;
-
-  // ── 3. Read & parse body (for model discovery) ────────────────────
-  const bodyBuffer = method !== "GET" && method !== "HEAD" ? await req.arrayBuffer() : null;
-  const bodyText = bodyBuffer ? new TextDecoder().decode(bodyBuffer) : "";
-  const bodyJson = bodyText ? safeParseJson(bodyText) : null;
-  const model = parseModel(bodyJson);
-  meta.model = model;
-
-  // ── 4. Discover candidate providers (from cache — hot path) ───────
-  const providers = await getCachedProviders(userId);
 
   // ── Intercept /models endpoint ───────────────────────────────────
   if (detected.type === "models") {
+    let providers: CachedProvider[] = [];
+
+    if (masterKey && masterKey.isActive) {
+      providers = await getCachedProviders(masterKey.userId);
+    } else {
+      // Fallback: fetch all active providers from DB if unauthenticated /models
+      const dbProviders = await db.provider.findMany({
+        where: { isActive: true, apiKeys: { some: { isActive: true } } },
+        include: {
+          models: { where: { isActive: true } },
+          apiKeys: { where: { isActive: true } },
+        },
+      });
+      providers = dbProviders.map((p) => ({
+        id: p.id,
+        name: p.name,
+        baseUrl: p.baseUrl,
+        authHeader: p.authHeader,
+        authScheme: p.authScheme,
+        protocol: p.protocol ?? "transparent",
+        priority: p.priority,
+        timeoutMs: p.timeoutMs,
+        endpoints: [],
+        models: p.models.map((m) => ({ id: m.id, name: m.name })),
+        apiKeys: p.apiKeys.map((k) => ({
+          id: k.id,
+          encryptedKey: k.encryptedKey,
+          name: k.name,
+          isActive: k.isActive,
+          status: k.status,
+          cooldownUntil: k.cooldownUntil,
+          lastUsedAt: k.lastUsedAt,
+          totalErrors: k.totalErrors,
+          totalSuccess: k.totalSuccess,
+          totalRequests: k.totalRequests,
+          lastError: k.lastError,
+        })),
+      }));
+    }
+
     const uniqueModels = new Set<string>();
     // 1. Add explicitly configured models
     for (const p of providers) {
@@ -166,21 +200,19 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
         uniqueModels.add(m.name);
       }
     }
-    
+
     // 2. Auto-discover models from upstream providers concurrently
     const fetchPromises = providers.map(async (provider) => {
-      // Need at least one active key to fetch models
-      const key = provider.apiKeys.find(k => k.isActive && k.status === "active");
+      const key = provider.apiKeys.find((k) => k.isActive && k.status === "active");
       if (!key) return;
 
       const base = provider.baseUrl.replace(/\/+$/, "");
-      let url = `${base}/models`; // Default OpenAI-compatible models endpoint
-      
+      let url = `${base}/models`;
+
       const fwdHeaders = new Headers();
       try {
         const decryptedKey = decrypt(key.encryptedKey);
-        
-        // Build auth headers based on scheme
+
         if (provider.authScheme === "bearer" || provider.authScheme === "raw") {
           if (provider.authHeader.toLowerCase() === "authorization") {
             fwdHeaders.set("Authorization", provider.authScheme === "bearer" ? `Bearer ${decryptedKey}` : decryptedKey);
@@ -190,21 +222,19 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
         } else if (provider.authScheme === "x-api-key") {
           fwdHeaders.set("x-api-key", decryptedKey);
         } else if (provider.authScheme === "query") {
-           url += `?${provider.authHeader || "key"}=${decryptedKey}`;
+          url += `?${provider.authHeader || "key"}=${decryptedKey}`;
         } else {
           fwdHeaders.set(provider.authHeader, decryptedKey);
         }
 
-        // 5 second timeout to prevent the /models endpoint from hanging
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 5000);
-        
+
         const res = await fetch(url, { headers: fwdHeaders, signal: controller.signal });
         clearTimeout(timeoutId);
-        
+
         if (res.ok) {
           const json = await res.json();
-          // Assuming OpenAI format: { object: "list", data: [{ id: "model-name" }] }
           if (json && Array.isArray(json.data)) {
             json.data.forEach((m: any) => {
               if (m && typeof m.id === "string") {
@@ -214,7 +244,7 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
           }
         }
       } catch (e) {
-        // Ignore timeouts or unsupported endpoints silently
+        // Ignore
       }
     });
 
@@ -230,11 +260,25 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
     return new Response(JSON.stringify({ object: "list", data }), {
       status: 200,
       headers: {
-        "Content-Type": "application/json",
-        "Access-Control-Allow-Origin": "*",
+        "content-type": "application/json",
+        "cache-control": "no-cache",
       },
     });
   }
+
+  // Beyond this point, it's non-models endpoint, so masterKey is guaranteed non-null!
+  const validMasterKey = masterKey!;
+  const userId = validMasterKey.userId;
+
+  // ── 3. Read & parse body (for model discovery) ────────────────────
+  const bodyBuffer = method !== "GET" && method !== "HEAD" ? await req.arrayBuffer() : null;
+  const bodyText = bodyBuffer ? new TextDecoder().decode(bodyBuffer) : "";
+  const bodyJson = bodyText ? safeParseJson(bodyText) : null;
+  const model = parseModel(bodyJson);
+  meta.model = model;
+
+  // ── 4. Discover candidate providers (from cache — hot path) ───────
+  const providers = await getCachedProviders(userId);
 
   // Only consider providers that have an endpoint of the requested type.
   // ALSO include providers with protocol-translation that have their native
@@ -525,8 +569,8 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
         respHeaders.set("x-gateway-retries", String(meta.retried));
 
         logRequestBackground({
-          userId,
-          masterApiKeyId: masterKey.id,
+          userId: userId!,
+          masterApiKeyId: masterKey!.id,
           providerId: provider.id,
           providerKeyId: key.id,
           providerName: provider.name,
@@ -540,7 +584,7 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
           success: true,
           retried: meta.retried - 1,
         });
-        touchMasterKeyBackground(masterKey.id);
+        touchMasterKeyBackground(masterKey!.id);
 
         // ── AWAIT the success DB write before returning ──
         // On Vercel serverless, fire-and-forget writes are dropped when the
@@ -762,8 +806,8 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
         meta.providerKeyId = key.id;
         meta.providerName = provider.name;
         logRequestBackground({
-          userId,
-          masterApiKeyId: masterKey.id,
+          userId: userId!,
+          masterApiKeyId: masterKey!.id,
           providerId: provider.id,
           providerKeyId: key.id,
           providerName: provider.name,
@@ -778,7 +822,7 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
           retried: meta.retried - 1,
           error: `client_${status}`,
         });
-        touchMasterKeyBackground(masterKey.id);
+        touchMasterKeyBackground(masterKey!.id);
         return new Response(errText, {
           status,
           statusText: upstream.statusText,
@@ -801,8 +845,8 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
   break; // no more passes
   } // end for pass
   logRequestBackground({
-    userId,
-    masterApiKeyId: masterKey.id,
+    userId: userId!,
+    masterApiKeyId: masterKey!.id,
     providerId: meta.providerId,
     providerKeyId: meta.providerKeyId,
     providerName: meta.providerName,
@@ -817,7 +861,7 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
     retried: meta.retried,
     error: "all_keys_exhausted",
   });
-  touchMasterKeyBackground(masterKey.id);
+  touchMasterKeyBackground(masterKey!.id);
   return jsonError(
     502,
     `All provider keys exhausted for ${detected.type}${model ? ` / ${model}` : ""}. ${meta.retried} attempt(s) made.`,
