@@ -1035,7 +1035,9 @@ function translateAnthropicStream(
             }
             const chunk = anthropicStreamToOpenAI(evt, data, state);
             if (chunk) {
-              if (chunk.includes("finish_reason")) hasFinishReason = true;
+              if (chunk.includes("finish_reason") && !chunk.includes('"finish_reason":null') && !chunk.includes('"finish_reason": null')) {
+                hasFinishReason = true;
+              }
               if (chunk.includes("[DONE]")) hasDone = true;
               controller.enqueue(encoder.encode(chunk));
             }
@@ -1046,8 +1048,9 @@ function translateAnthropicStream(
       } finally {
         clearInterval(pingInterval);
         if (!hasFinishReason) {
+          const fallbackReason = state.toolIndex !== undefined ? "tool_calls" : "stop";
           controller.enqueue(
-            encoder.encode(`data: {"id":"chatcmpl-${Date.now()}","object":"chat.completion.chunk","created":${Math.floor(Date.now()/1000)},"model":"${state.model}","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n`)
+            encoder.encode(`data: {"id":"chatcmpl-${Date.now()}","object":"chat.completion.chunk","created":${Math.floor(Date.now()/1000)},"model":"${state.model}","choices":[{"index":0,"delta":{},"finish_reason":"${fallbackReason}"}]}\n\n`)
           );
         }
         if (!hasDone) {
@@ -1135,7 +1138,9 @@ function translateGeminiStream(
 
             const chunk = geminiStreamToOpenAI(data, state);
             if (chunk) {
-              if (chunk.includes("finish_reason")) hasFinishReason = true;
+              if (chunk.includes("finish_reason") && !chunk.includes('"finish_reason":null') && !chunk.includes('"finish_reason": null')) {
+                hasFinishReason = true;
+              }
               if (chunk.includes("[DONE]")) hasDone = true;
               controller.enqueue(encoder.encode(chunk));
             }
@@ -1216,7 +1221,9 @@ function translateResponsesStream(
             }
             const chunk = responsesStreamToOpenAI(evt, data, state);
             if (chunk) {
-              if (chunk.includes("finish_reason")) hasFinishReason = true;
+              if (chunk.includes("finish_reason") && !chunk.includes('"finish_reason":null') && !chunk.includes('"finish_reason": null')) {
+                hasFinishReason = true;
+              }
               if (chunk.includes("[DONE]")) hasDone = true;
               controller.enqueue(encoder.encode(chunk));
             }

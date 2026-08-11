@@ -258,13 +258,14 @@ export function anthropicToOpenAIResponse(body: unknown): unknown {
   };
 }
 
-function mapAnthropicFinishReason(reason: unknown): string {
+function mapAnthropicFinishReason(reason: unknown): string | null {
+  if (!reason) return null;
   switch (reason) {
     case "end_turn":
     case "stop_sequence": return "stop";
     case "max_tokens": return "length";
     case "tool_use": return "tool_calls";
-    default: return "stop";
+    default: return null;
   }
 }
 
@@ -333,18 +334,17 @@ export function anthropicStreamToOpenAI(
   if (event === "message_delta") {
     const d = data as { delta?: { stop_reason?: string } };
     const finish = mapAnthropicFinishReason(d?.delta?.stop_reason);
-    return `data: ${JSON.stringify({
-      id, object: "chat.completion.chunk", created, model,
-      choices: [{ index: 0, delta: {}, finish_reason: finish }],
-    })}\n\n`;
+    if (finish !== null) {
+      return `data: ${JSON.stringify({
+        id, object: "chat.completion.chunk", created, model,
+        choices: [{ index: 0, delta: {}, finish_reason: finish }],
+      })}\n\n`;
+    }
+    return null;
   }
 
   if (event === "message_stop") {
-    const finishReason = state.toolIndex !== undefined ? "tool_calls" : "stop";
-    return `data: ${JSON.stringify({
-      id, object: "chat.completion.chunk", created, model,
-      choices: [{ index: 0, delta: {}, finish_reason: finishReason }],
-    })}\n\ndata: [DONE]\n\n`;
+    return `data: [DONE]\n\n`;
   }
 
   return null;
