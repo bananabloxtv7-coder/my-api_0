@@ -989,6 +989,14 @@ function translateAnthropicStream(
       let hasFinishReason = false;
       let hasDone = false;
 
+      const pingInterval = setInterval(() => {
+        try {
+          controller.enqueue(encoder.encode(": keep-alive\n\n"));
+        } catch {
+          clearInterval(pingInterval);
+        }
+      }, 3000);
+
       // Lazy import to avoid circular dependency at module load
       const { anthropicStreamToOpenAI } = await import("./translate");
 
@@ -1029,6 +1037,7 @@ function translateAnthropicStream(
       } catch {
         // Fallthrough to finally block
       } finally {
+        clearInterval(pingInterval);
         if (!hasFinishReason) {
           controller.enqueue(
             encoder.encode(`data: {"id":"chatcmpl-${Date.now()}","object":"chat.completion.chunk","created":${Math.floor(Date.now()/1000)},"model":"${state.model}","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n`)
@@ -1066,6 +1075,14 @@ function translateGeminiStream(
       let sentRole = false;
       let hasFinishReason = false;
       let hasDone = false;
+
+      const pingInterval = setInterval(() => {
+        try {
+          controller.enqueue(encoder.encode(": keep-alive\n\n"));
+        } catch {
+          clearInterval(pingInterval);
+        }
+      }, 3000);
 
       const { geminiStreamToOpenAI } = await import("./translate");
 
@@ -1120,6 +1137,7 @@ function translateGeminiStream(
       } catch {
         // Fallthrough to finally block
       } finally {
+        clearInterval(pingInterval);
         if (!hasFinishReason) {
           controller.enqueue(
             encoder.encode(`data: {"id":"chatcmpl-${Date.now()}","object":"chat.completion.chunk","created":${Math.floor(Date.now()/1000)},"model":"${state.model}","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n`)
@@ -1154,6 +1172,14 @@ function translateResponsesStream(
       let buffer = "";
       let hasFinishReason = false;
       let hasDone = false;
+
+      const pingInterval = setInterval(() => {
+        try {
+          controller.enqueue(encoder.encode(": keep-alive\n\n"));
+        } catch {
+          clearInterval(pingInterval);
+        }
+      }, 3000);
 
       try {
         while (true) {
@@ -1192,6 +1218,7 @@ function translateResponsesStream(
       } catch {
         // Fallthrough to finally block
       } finally {
+        clearInterval(pingInterval);
         if (!hasFinishReason) {
           controller.enqueue(
             encoder.encode(`data: {"id":"chatcmpl-${Date.now()}","object":"chat.completion.chunk","created":${Math.floor(Date.now()/1000)},"model":"${state.model}","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n`)
@@ -1473,6 +1500,15 @@ function sanitizeOpenAIStream(
       let hasDone = false;
       let buffer = "";
 
+      // Send SSE keep-alive ping every 3 seconds during idle gaps to prevent client/proxy timeouts
+      const pingInterval = setInterval(() => {
+        try {
+          controller.enqueue(encoder.encode(": keep-alive\n\n"));
+        } catch {
+          clearInterval(pingInterval);
+        }
+      }, 3000);
+
       const processLine = (line: string) => {
         const trimmed = line.trim();
         if (!trimmed) {
@@ -1545,6 +1581,7 @@ function sanitizeOpenAIStream(
           controller.enqueue(encoder.encode(`data: [DONE]\n\n`));
         }
       } finally {
+        clearInterval(pingInterval);
         controller.close();
       }
     },
