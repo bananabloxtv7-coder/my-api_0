@@ -428,7 +428,7 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
       // Build target URL: provider baseUrl + endpoint path + original query
       let target: URL;
       if (isGeminiProvider && model) {
-        const geminiUrl = buildGeminiUrl(provider.baseUrl, model, false);
+        const geminiUrl = buildGeminiUrl(provider.baseUrl, model, clientWantsStream);
         target = new URL(geminiUrl);
       } else {
         const base = provider.baseUrl.replace(/\/+$/, "");
@@ -499,11 +499,6 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
       const emulationState: EmulationState = { hasTools: false };
       
       let finalBodyJson = bodyJson;
-      if (finalBodyJson && typeof finalBodyJson === "object") {
-        // Force upstream requests to be non-streaming (stream: false) to eliminate upstream SSE stream drops.
-        // If the client requested streaming (clientWantsStream = true), the gateway generates a synthetic SSE stream via generateFakeStream.
-        (finalBodyJson as Record<string, unknown>).stream = false;
-      }
       if (needsToolEmulation && finalBodyJson) {
         finalBodyJson = emulateToolsInRequest(finalBodyJson, emulationState);
       }
