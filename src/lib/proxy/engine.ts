@@ -841,11 +841,6 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
         statusCode: status,
       });
 
-      // ── Quota exhausted: skip to next PROVIDER (not just next key) ──
-      if (verdict.action === "quota_exhausted") {
-        break; // break out of the key loop → move to next provider
-      }
-
       // If it's a client error that isn't the key's fault, return it to the
       // client immediately (transparent behaviour — don't silently retry).
       if (verdict.action === "ignore") {
