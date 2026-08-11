@@ -340,9 +340,10 @@ export function anthropicStreamToOpenAI(
   }
 
   if (event === "message_stop") {
+    const finishReason = state.toolIndex !== undefined ? "tool_calls" : "stop";
     return `data: ${JSON.stringify({
       id, object: "chat.completion.chunk", created, model,
-      choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+      choices: [{ index: 0, delta: {}, finish_reason: finishReason }],
     })}\n\ndata: [DONE]\n\n`;
   }
 

@@ -1497,6 +1497,7 @@ function sanitizeOpenAIStream(
       }
       const reader = body.getReader();
       let hasFinishReason = false;
+      let hasToolCall = false;
       let hasDone = false;
       let buffer = "";
 
@@ -1521,7 +1522,8 @@ function sanitizeOpenAIStream(
             hasDone = true;
             if (!hasFinishReason) {
               hasFinishReason = true;
-              const stopChunk = `data: {"id":"chatcmpl-${Date.now()}","object":"chat.completion.chunk","created":${Math.floor(Date.now() / 1000)},"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n`;
+              const finishReason = hasToolCall ? "tool_calls" : "stop";
+              const stopChunk = `data: {"id":"chatcmpl-${Date.now()}","object":"chat.completion.chunk","created":${Math.floor(Date.now() / 1000)},"choices":[{"index":0,"delta":{},"finish_reason":"${finishReason}"}]}\n\n`;
               controller.enqueue(encoder.encode(stopChunk));
             }
             controller.enqueue(encoder.encode(line + "\n"));
@@ -1535,6 +1537,9 @@ function sanitizeOpenAIStream(
             }
             if (Array.isArray(parsed.choices)) {
               for (const choice of parsed.choices) {
+                if (choice.delta?.tool_calls?.length > 0 || choice.message?.tool_calls?.length > 0) {
+                  hasToolCall = true;
+                }
                 if (choice.finish_reason) {
                   hasFinishReason = true;
                 }
@@ -1568,8 +1573,9 @@ function sanitizeOpenAIStream(
         }
 
         if (!hasFinishReason) {
+          const finishReason = hasToolCall ? "tool_calls" : "stop";
           controller.enqueue(
-            encoder.encode(`data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n`)
+            encoder.encode(`data: {"choices":[{"index":0,"delta":{},"finish_reason":"${finishReason}"}]}\n\n`)
           );
         }
 
@@ -1578,8 +1584,9 @@ function sanitizeOpenAIStream(
         }
       } catch {
         if (!hasFinishReason) {
+          const finishReason = hasToolCall ? "tool_calls" : "stop";
           controller.enqueue(
-            encoder.encode(`data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n`)
+            encoder.encode(`data: {"choices":[{"index":0,"delta":{},"finish_reason":"${finishReason}"}]}\n\n`)
           );
         }
         if (!hasDone) {
