@@ -67,9 +67,9 @@ export function classifyResponse(
     return { action: "ignore", cooldownMs: 0, reason: "client_error" };
   }
 
-  // Authentication errors — disable the key
+  // Authentication/Permission errors — transient cooldown instead of permanent disable
   if (status === 401 || status === 403) {
-    return { action: "disable", cooldownMs: 0, reason: matchBodyError(bodyText) || "unauthorized" };
+    return { action: "cooldown", cooldownMs: 10_000, reason: matchBodyError(bodyText) || "unauthorized" };
   }
 
   // Payment required — quota/billing (no balance)
