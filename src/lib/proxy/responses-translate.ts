@@ -249,6 +249,17 @@ export function responsesStreamToOpenAI(
     return `data: ${JSON.stringify(roleChunk)}\n\n`;
   }
 
+  // Reasoning delta
+  if (event === "response.reasoning.delta" || event === "response.reasoning_text.delta") {
+    const d = data as Record<string, unknown>;
+    const text = (d?.delta as string) ?? (d?.text as string) ?? "";
+    if (!text) return null;
+    return `data: ${JSON.stringify({
+      id, object: "chat.completion.chunk", created, model,
+      choices: [{ index: 0, delta: { reasoning_content: text }, finish_reason: null }],
+    })}\n\n`;
+  }
+
   // Text delta
   if (event === "response.output_text.delta") {
     const d = data as Record<string, unknown>;

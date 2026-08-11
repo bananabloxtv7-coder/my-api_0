@@ -304,12 +304,18 @@ export function anthropicStreamToOpenAI(
   }
 
   if (event === "content_block_delta") {
-    const d = data as { delta?: { type?: string; text?: string; partial_json?: string } };
+    const d = data as { delta?: { type?: string; text?: string; thinking?: string; partial_json?: string } };
     const delta = d?.delta;
     if (delta?.type === "text_delta" && delta.text) {
       return `data: ${JSON.stringify({
         id, object: "chat.completion.chunk", created, model,
         choices: [{ index: 0, delta: { content: delta.text }, finish_reason: null }],
+      })}\n\n`;
+    }
+    if (delta?.type === "thinking_delta" && delta.thinking) {
+      return `data: ${JSON.stringify({
+        id, object: "chat.completion.chunk", created, model,
+        choices: [{ index: 0, delta: { reasoning_content: delta.thinking }, finish_reason: null }],
       })}\n\n`;
     }
     if (delta?.type === "input_json_delta" && delta.partial_json !== undefined) {
