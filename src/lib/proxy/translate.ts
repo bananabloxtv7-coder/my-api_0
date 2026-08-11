@@ -58,16 +58,31 @@ interface AnthropicRequestBody {
 //  OpenAI ↔ Anthropic
 // ═══════════════════════════════════════════════════════════════════════════
 
+export function mapAnthropicModel(model: string): string {
+  if (!model) return "claude-3-7-sonnet-20250219";
+  const m = model.toLowerCase();
+  if (m.includes("opus-5") || m.includes("opus")) return "claude-3-opus-20240229";
+  if (m.includes("3-7") || m.includes("3.7") || m.includes("sonnet-3.7")) return "claude-3-7-sonnet-20250219";
+  if (m.includes("3-5") || m.includes("3.5") || m.includes("sonnet")) return "claude-3-5-sonnet-20241022";
+  if (m.includes("haiku")) return "claude-3-5-haiku-20241022";
+  return model;
+}
+
 /** Convert an OpenAI-style request body to Anthropic Messages API format. */
 export function openaiToAnthropicRequest(body: unknown): unknown {
   if (!body || typeof body !== "object") return body;
   const src = body as OpenAIRequestBody;
 
   const out: AnthropicRequestBody = {
-    model: src.model,
+    model: mapAnthropicModel(src.model || ""),
     messages: [],
     max_tokens: src.max_tokens ?? 8192,
   };
+
+  // Auto-enable adaptive thinking for thinking model aliases
+  if ((src.model?.toLowerCase().includes("thinking") || src.model?.toLowerCase().includes("opus-5")) && !out.thinking) {
+    out.thinking = { type: "adaptive" };
+  }
 
   // Extract system message(s): OpenAI puts them as a message with role "system".
   // Anthropic wants a top-level "system" string.

@@ -325,8 +325,12 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
   // no models configured (wildcard provider).
   let candidates: CachedProvider[];
   if (model) {
+    const normModel = model.toLowerCase();
     candidates = withEndpoint.filter(
-      (p) => p.models.length === 0 || p.models.some((m) => m.name === model)
+      (p) => p.models.length === 0 || p.models.some((m) => {
+        const mName = m.name.toLowerCase();
+        return mName === normModel || normModel.includes(mName) || mName.includes(normModel);
+      })
     );
     if (candidates.length === 0) {
       // No provider explicitly supports this model — fall back to wildcards
