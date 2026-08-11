@@ -792,7 +792,9 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
            return new Response(JSON.stringify(respJson), { status, statusText: upstream.statusText, headers: respHeaders });
         }
 
-        if (isSseStream && upstream.body) {
+        if ((isSseStream || clientWantsStream) && upstream.body) {
+          respHeaders.set("content-type", "text/event-stream");
+          respHeaders.set("cache-control", "no-cache");
           return new Response(sanitizeOpenAIStream(upstream.body), {
             status,
             statusText: upstream.statusText,
@@ -984,6 +986,8 @@ function translateAnthropicStream(
       }
       const reader = body.getReader();
       let buffer = "";
+      let hasFinishReason = false;
+      let hasDone = false;
 
       // Lazy import to avoid circular dependency at module load
       const { anthropicStreamToOpenAI } = await import("./translate");
@@ -1016,15 +1020,25 @@ function translateAnthropicStream(
             }
             const chunk = anthropicStreamToOpenAI(evt, data, state);
             if (chunk) {
+              if (chunk.includes("finish_reason")) hasFinishReason = true;
+              if (chunk.includes("[DONE]")) hasDone = true;
               controller.enqueue(encoder.encode(chunk));
             }
           }
         }
-      } catch (err) {
-        controller.error(err);
-        return;
+      } catch {
+        // Fallthrough to finally block
+      } finally {
+        if (!hasFinishReason) {
+          controller.enqueue(
+            encoder.encode(`data: {"id":"chatcmpl-${Date.now()}","object":"chat.completion.chunk","created":${Math.floor(Date.now()/1000)},"model":"${state.model}","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n`)
+          );
+        }
+        if (!hasDone) {
+          controller.enqueue(encoder.encode(`data: [DONE]\n\n`));
+        }
+        controller.close();
       }
-      controller.close();
     },
   });
 }
@@ -1050,6 +1064,8 @@ function translateGeminiStream(
       const reader = body.getReader();
       let buffer = "";
       let sentRole = false;
+      let hasFinishReason = false;
+      let hasDone = false;
 
       const { geminiStreamToOpenAI } = await import("./translate");
 
@@ -1095,17 +1111,25 @@ function translateGeminiStream(
 
             const chunk = geminiStreamToOpenAI(data, state);
             if (chunk) {
+              if (chunk.includes("finish_reason")) hasFinishReason = true;
+              if (chunk.includes("[DONE]")) hasDone = true;
               controller.enqueue(encoder.encode(chunk));
             }
           }
         }
-      } catch (err) {
-        controller.error(err);
-        return;
+      } catch {
+        // Fallthrough to finally block
+      } finally {
+        if (!hasFinishReason) {
+          controller.enqueue(
+            encoder.encode(`data: {"id":"chatcmpl-${Date.now()}","object":"chat.completion.chunk","created":${Math.floor(Date.now()/1000)},"model":"${state.model}","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n`)
+          );
+        }
+        if (!hasDone) {
+          controller.enqueue(encoder.encode(`data: [DONE]\n\n`));
+        }
+        controller.close();
       }
-      // Send [DONE]
-      controller.enqueue(encoder.encode(`data: [DONE]\n\n`));
-      controller.close();
     },
   });
 }
@@ -1128,6 +1152,8 @@ function translateResponsesStream(
       }
       const reader = body.getReader();
       let buffer = "";
+      let hasFinishReason = false;
+      let hasDone = false;
 
       try {
         while (true) {
@@ -1157,15 +1183,25 @@ function translateResponsesStream(
             }
             const chunk = responsesStreamToOpenAI(evt, data, state);
             if (chunk) {
+              if (chunk.includes("finish_reason")) hasFinishReason = true;
+              if (chunk.includes("[DONE]")) hasDone = true;
               controller.enqueue(encoder.encode(chunk));
             }
           }
         }
-      } catch (err) {
-        controller.error(err);
-        return;
+      } catch {
+        // Fallthrough to finally block
+      } finally {
+        if (!hasFinishReason) {
+          controller.enqueue(
+            encoder.encode(`data: {"id":"chatcmpl-${Date.now()}","object":"chat.completion.chunk","created":${Math.floor(Date.now()/1000)},"model":"${state.model}","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n`)
+          );
+        }
+        if (!hasDone) {
+          controller.enqueue(encoder.encode(`data: [DONE]\n\n`));
+        }
+        controller.close();
       }
-      controller.close();
     },
   });
 }
