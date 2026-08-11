@@ -550,7 +550,7 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
 
       // Provider timeout for initial connection (TTFB). Fast failover if dead.
       // We do NOT use AbortSignal.timeout because it applies to the entire request and aborts the stream midway.
-      const timeoutMs = Math.min(Math.max(provider.timeoutMs || 12000, 3000), 12000);
+      const timeoutMs = Math.min(Math.max(provider.timeoutMs || 120000, 5000), 300000);
       const controller = new AbortController();
       let timeoutId: ReturnType<typeof setTimeout> | undefined;
       try {

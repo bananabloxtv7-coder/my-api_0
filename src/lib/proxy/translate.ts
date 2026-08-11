@@ -66,7 +66,7 @@ export function openaiToAnthropicRequest(body: unknown): unknown {
   const out: AnthropicRequestBody = {
     model: src.model,
     messages: [],
-    max_tokens: src.max_tokens ?? 4096,
+    max_tokens: src.max_tokens ?? 8192,
   };
 
   // Extract system message(s): OpenAI puts them as a message with role "system".

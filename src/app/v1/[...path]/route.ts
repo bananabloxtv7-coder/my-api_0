@@ -2,7 +2,7 @@ import { proxyHandler } from "@/lib/proxy/handler";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 /**
  * Transparent reverse-proxy — OpenAI-compatible mount point: /v1/*
