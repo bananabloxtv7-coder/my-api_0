@@ -780,21 +780,28 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
           upstream.headers.get("content-type") || ""
         );
         
-        if (emulationState.hasTools && !isSseStream) {
-           const respText = await upstream.text();
-           let respJson = safeParseJson(respText);
-           respJson = emulateToolsInResponse(respJson, emulationState);
-           if (clientWantsStream) {
-              respHeaders.set("content-type", "text/event-stream");
-              respHeaders.set("cache-control", "no-cache");
-              return new Response(generateFakeStream(respJson), { status, statusText: upstream.statusText, headers: respHeaders });
-           }
-           return new Response(JSON.stringify(respJson), { status, statusText: upstream.statusText, headers: respHeaders });
+        if (!isSseStream && clientWantsStream) {
+          const respText = await upstream.text();
+          let respJson = safeParseJson(respText);
+          if (emulationState.hasTools) {
+            respJson = emulateToolsInResponse(respJson, emulationState);
+          }
+          respHeaders.set("content-type", "text/event-stream");
+          respHeaders.set("cache-control", "no-cache, no-transform");
+          respHeaders.set("connection", "keep-alive");
+          respHeaders.set("x-accel-buffering", "no");
+          return new Response(generateFakeStream(respJson), {
+            status,
+            statusText: upstream.statusText,
+            headers: respHeaders,
+          });
         }
 
-        if ((isSseStream || clientWantsStream) && upstream.body) {
+        if (isSseStream && upstream.body) {
           respHeaders.set("content-type", "text/event-stream");
-          respHeaders.set("cache-control", "no-cache");
+          respHeaders.set("cache-control", "no-cache, no-transform");
+          respHeaders.set("connection", "keep-alive");
+          respHeaders.set("x-accel-buffering", "no");
           return new Response(sanitizeOpenAIStream(upstream.body), {
             status,
             statusText: upstream.statusText,

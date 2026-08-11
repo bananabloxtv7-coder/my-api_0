@@ -166,7 +166,7 @@ export function generateFakeStream(responseJson: any): string {
   streamOut += `data: ${JSON.stringify(startChunk)}\n\n`;
   
   const message = responseJson.choices?.[0]?.message;
-  const finishReason = responseJson.choices?.[0]?.finish_reason || "stop";
+  const finishReason = responseJson.choices?.[0]?.finish_reason || (message?.tool_calls?.length ? "tool_calls" : "stop");
   
   if (message) {
     if (message.content) {
