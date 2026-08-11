@@ -150,8 +150,8 @@ export function emulateToolsInResponse(responseJson: any, state: EmulationState)
  * but the client might still expect a streaming response.
  */
 export function generateFakeStream(responseJson: any): string {
-  const model = responseJson.model || "unknown";
-  const id = responseJson.id || `chatcmpl-${Date.now()}`;
+  const model = responseJson?.model || "unknown";
+  const id = responseJson?.id || `chatcmpl-${Date.now()}`;
   
   let streamOut = "";
   
@@ -165,22 +165,46 @@ export function generateFakeStream(responseJson: any): string {
   };
   streamOut += `data: ${JSON.stringify(startChunk)}\n\n`;
   
-  const message = responseJson.choices?.[0]?.message;
-  const finishReason = responseJson.choices?.[0]?.finish_reason || (message?.tool_calls?.length ? "tool_calls" : "stop");
+  const message = responseJson?.choices?.[0]?.message || responseJson?.message;
+  const finishReason = responseJson?.choices?.[0]?.finish_reason || (message?.tool_calls?.length ? "tool_calls" : "stop");
   
   if (message) {
-    if (message.content) {
+    // Reasoning / Thinking content
+    const reasoningText = message.reasoning_content || message.reasoning || message.thinking;
+    if (reasoningText && typeof reasoningText === "string") {
+      const reasoningChunk = {
+        id,
+        object: "chat.completion.chunk",
+        created: Math.floor(Date.now() / 1000),
+        model,
+        choices: [{ index: 0, delta: { reasoning_content: reasoningText }, finish_reason: null }]
+      };
+      streamOut += `data: ${JSON.stringify(reasoningChunk)}\n\n`;
+    }
+
+    // Text Content (string or array)
+    let contentText = "";
+    if (typeof message.content === "string") {
+      contentText = message.content;
+    } else if (Array.isArray(message.content)) {
+      for (const item of message.content) {
+        if (typeof item === "string") contentText += item;
+        else if (item && typeof item === "object" && typeof item.text === "string") contentText += item.text;
+      }
+    }
+    if (contentText) {
       const contentChunk = {
         id,
         object: "chat.completion.chunk",
         created: Math.floor(Date.now() / 1000),
         model,
-        choices: [{ index: 0, delta: { content: message.content }, finish_reason: null }]
+        choices: [{ index: 0, delta: { content: contentText }, finish_reason: null }]
       };
       streamOut += `data: ${JSON.stringify(contentChunk)}\n\n`;
     }
     
-    if (message.tool_calls && message.tool_calls.length > 0) {
+    // Tool calls
+    if (message.tool_calls && Array.isArray(message.tool_calls) && message.tool_calls.length > 0) {
       const toolChunk = {
         id,
         object: "chat.completion.chunk",
@@ -191,7 +215,7 @@ export function generateFakeStream(responseJson: any): string {
           delta: { 
             tool_calls: message.tool_calls.map((tc: any, i: number) => ({
               index: i,
-              id: tc.id,
+              id: tc.id || `call_${Date.now()}_${i}`,
               type: "function",
               function: tc.function
             }))
