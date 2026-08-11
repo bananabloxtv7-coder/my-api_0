@@ -49,9 +49,10 @@ export function emulateToolsInRequest(body: any, state: EmulationState): any {
   let systemInjected = false;
   
   for (const msg of originalMessages) {
-    if (msg.role === "system") {
+    if (msg.role === "system" || msg.role === "developer") {
       out.messages.push({
         ...msg,
+        role: "system", // normalize developer → system
         content: typeof msg.content === "string" 
           ? msg.content + "\n\n" + toolPrompt
           : msg.content

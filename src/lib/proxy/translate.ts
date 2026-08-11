@@ -74,7 +74,7 @@ export function openaiToAnthropicRequest(body: unknown): unknown {
   const systemParts: string[] = [];
   const chatMessages: OpenAIMessage[] = [];
   for (const m of src.messages ?? []) {
-    if (m.role === "system") {
+    if (m.role === "system" || m.role === "developer") {
       if (typeof m.content === "string") systemParts.push(m.content);
       else if (Array.isArray(m.content)) {
         for (const part of m.content) {
@@ -346,7 +346,7 @@ export function openaiToGeminiRequest(body: unknown): unknown {
   const systemParts: string[] = [];
   const chatMessages: OpenAIMessage[] = [];
   for (const m of src.messages ?? []) {
-    if (m.role === "system") {
+    if (m.role === "system" || m.role === "developer") {
       if (typeof m.content === "string") systemParts.push(m.content);
     } else {
       chatMessages.push(m);

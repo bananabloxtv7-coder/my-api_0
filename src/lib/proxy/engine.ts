@@ -27,6 +27,37 @@ import {
 import { createFakeStream, fakeStreamHeaders } from "./fake-stream";
 import { getCachedProviders, markKeyStateInCache, resetProviderKeysInCache, markKeyInFlight, clearKeyInFlight, isKeyInFlight, type CachedProvider, type CachedKey } from "./cache";
 
+// ═══════════════════════════════════════════════════════════════════════════
+//  Role Normalization & Thinking Enhancement
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Normalize message roles so providers that only accept standard OpenAI Chat
+ * roles ("system", "user", "assistant", "tool") don't reject the request.
+ *
+ * Mapping:
+ *   "developer" → "system"  (Responses API alias — semantically identical)
+ *
+ * This runs ONLY when the body has messages and is forwarded transparently
+ * (i.e. no protocol translation is already handling role conversion).
+ */
+function normalizeMessageRoles(body: Record<string, unknown>): Record<string, unknown> {
+  const messages = body.messages;
+  if (!Array.isArray(messages)) return body;
+
+  let changed = false;
+  const normalized = messages.map((m: Record<string, unknown>) => {
+    if (m.role === "developer") {
+      changed = true;
+      return { ...m, role: "system" };
+    }
+    return m;
+  });
+
+  if (!changed) return body;
+  return { ...body, messages: normalized };
+}
+
 export interface ProxyResult {
   response: Response;
   meta: {
@@ -496,6 +527,15 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
           init.body = JSON.stringify(translated);
         } else if (finalBodyJson && emulationState.hasTools) {
           init.body = JSON.stringify(finalBodyJson);
+        } else if (finalBodyJson) {
+          // ── Transparent provider: normalize roles ──
+          // Even in "transparent" mode we must fix roles like "developer"
+          // that some upstream providers (CometAPI, etc.) reject with 400.
+          // NOTE: We do NOT inject thinking here — the thinking parameter is
+          // Anthropic-specific and would cause errors on OpenAI-compatible
+          // providers like CometAPI.
+          const normalized = normalizeMessageRoles(finalBodyJson as Record<string, unknown>);
+          init.body = JSON.stringify(normalized);
         } else {
           init.body = bodyBuffer;
         }
