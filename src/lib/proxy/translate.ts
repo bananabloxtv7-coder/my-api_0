@@ -340,7 +340,10 @@ export function anthropicStreamToOpenAI(
   }
 
   if (event === "message_stop") {
-    return `data: [DONE]\n\n`;
+    return `data: ${JSON.stringify({
+      id, object: "chat.completion.chunk", created, model,
+      choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+    })}\n\ndata: [DONE]\n\n`;
   }
 
   return null;

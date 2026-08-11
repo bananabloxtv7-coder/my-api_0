@@ -1519,6 +1519,11 @@ function sanitizeOpenAIStream(
           const payload = trimmed.slice(6).trim();
           if (payload === "[DONE]") {
             hasDone = true;
+            if (!hasFinishReason) {
+              hasFinishReason = true;
+              const stopChunk = `data: {"id":"chatcmpl-${Date.now()}","object":"chat.completion.chunk","created":${Math.floor(Date.now() / 1000)},"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n`;
+              controller.enqueue(encoder.encode(stopChunk));
+            }
             controller.enqueue(encoder.encode(line + "\n"));
             return;
           }
