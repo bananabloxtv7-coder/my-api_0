@@ -356,24 +356,10 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
   for (let pass = 0; pass < 3; pass++) {
     const now = Date.now();
   for (const provider of candidates) {
-    // ── Check if request combines tools + reasoning ──
-    // OpenAI / CometAPI reject tools + reasoning_effort on /v1/chat/completions (HTTP 400).
-    // Automatically upgrade such requests to the responses protocol (/v1/responses).
-    const reqObj = bodyJson as Record<string, unknown> | null;
-    const hasTools = Boolean(reqObj && (
-      (Array.isArray(reqObj.tools) && reqObj.tools.length > 0) ||
-      (Array.isArray(reqObj.functions) && reqObj.functions.length > 0)
-    ));
-    const hasReasoning = Boolean(reqObj && (
-      reqObj.reasoning_effort !== undefined ||
-      reqObj.thinking !== undefined
-    ));
-    const autoUpgradeResponses = Boolean(hasTools && hasReasoning && provider.protocol !== "anthropic" && provider.protocol !== "gemini");
-
     // Determine which endpoint to use. If the provider speaks the Responses
-    // protocol (or was auto-upgraded), use its 'responses' endpoint if available.
+    // protocol, use its 'responses' endpoint if available.
     let endpoint = provider.endpoints.find((e) => e.type === detected.type);
-    if (provider.protocol === "responses" || autoUpgradeResponses) {
+    if (provider.protocol === "responses") {
       endpoint = provider.endpoints.find((e) => e.type === "responses") || endpoint;
     }
     if (!endpoint) continue;
@@ -433,7 +419,7 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
 
       // ── Protocol detection ──
       const isAnthropicProvider = provider.protocol === "anthropic";
-      const isResponsesProvider = provider.protocol === "responses" || autoUpgradeResponses;
+      const isResponsesProvider = provider.protocol === "responses";
       const isGeminiProvider = provider.protocol === "gemini";
       const clientWantsStream = bodyJson && typeof (bodyJson as Record<string, unknown>).stream === "boolean"
         ? (bodyJson as Record<string, unknown>).stream as boolean
@@ -538,11 +524,10 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
           // Convert Chat Completions (messages) → Responses API (input)
           const translated = chatToResponsesRequest(finalBodyJson);
           init.body = JSON.stringify(translated);
+          fwdHeaders.set("content-type", "application/json");
         } else if (isV0Provider && finalBodyJson) {
           const translated = chatToV0Request(finalBodyJson);
           init.body = JSON.stringify(translated);
-        } else if (finalBodyJson && emulationState.hasTools) {
-          init.body = JSON.stringify(finalBodyJson);
         } else if (finalBodyJson) {
           // ── Transparent provider: normalize roles ──
           // Even in "transparent" mode we must fix roles like "developer"
@@ -551,7 +536,13 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
           // Anthropic-specific and would cause errors on OpenAI-compatible
           // providers like CometAPI.
           const normalized = normalizeMessageRoles(finalBodyJson as Record<string, unknown>);
+          const hasToolsInReq = (Array.isArray(normalized.tools) && normalized.tools.length > 0) || (Array.isArray(normalized.functions) && normalized.functions.length > 0);
+          if (hasToolsInReq) {
+            delete normalized.reasoning_effort;
+            delete normalized.thinking;
+          }
           init.body = JSON.stringify(normalized);
+          fwdHeaders.set("content-type", "application/json");
         } else {
           init.body = bodyBuffer;
         }
