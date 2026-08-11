@@ -155,6 +155,15 @@ export function openaiToAnthropicRequest(body: unknown): unknown {
     if (!handled.has(k)) out[k] = v;
   }
 
+  // Convert thinking.type = "enabled" → "adaptive" for v0 compatibility
+  if (out.thinking && typeof out.thinking === "object") {
+    const tObj = out.thinking as Record<string, unknown>;
+    if (tObj.type === "enabled") {
+      tObj.type = "adaptive";
+      delete tObj.budget_tokens;
+    }
+  }
+
   return out;
 }
 
