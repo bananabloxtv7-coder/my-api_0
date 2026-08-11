@@ -108,10 +108,26 @@ export function chatToResponsesRequest(body: unknown): unknown {
   };
 
   if (typeof src.max_tokens === "number") out.max_output_tokens = src.max_tokens;
-
-  // Preserve the client's stream preference. The engine will handle
-  // stream translation via responsesStreamToOpenAI() if streaming is on.
   if (typeof src.stream === "boolean") out.stream = src.stream;
+
+  // Pass through tools, tool_choice, reasoning_effort, thinking
+  if (src.tools !== undefined) out.tools = src.tools;
+  if (src.tool_choice !== undefined) out.tool_choice = src.tool_choice;
+  if (src.reasoning_effort !== undefined) {
+    out.reasoning_effort = src.reasoning_effort;
+  }
+  if (src.thinking !== undefined) out.thinking = src.thinking;
+
+  // Pass through remaining optional parameters
+  const handled = new Set([
+    "model", "messages", "max_tokens", "stream", "tools", "tool_choice",
+    "reasoning_effort", "thinking"
+  ]);
+  for (const [k, v] of Object.entries(src)) {
+    if (!handled.has(k) && !(k in out)) {
+      out[k] = v;
+    }
+  }
 
   return out;
 }

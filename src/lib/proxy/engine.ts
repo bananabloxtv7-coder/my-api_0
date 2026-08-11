@@ -356,12 +356,24 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
   for (let pass = 0; pass < 3; pass++) {
     const now = Date.now();
   for (const provider of candidates) {
+    // ── Check if request combines tools + reasoning ──
+    // OpenAI / CometAPI reject tools + reasoning_effort on /v1/chat/completions (HTTP 400).
+    // Automatically upgrade such requests to the responses protocol (/v1/responses).
+    const reqObj = bodyJson as Record<string, unknown> | null;
+    const hasTools = Boolean(reqObj && (
+      (Array.isArray(reqObj.tools) && reqObj.tools.length > 0) ||
+      (Array.isArray(reqObj.functions) && reqObj.functions.length > 0)
+    ));
+    const hasReasoning = Boolean(reqObj && (
+      reqObj.reasoning_effort !== undefined ||
+      reqObj.thinking !== undefined
+    ));
+    const autoUpgradeResponses = Boolean(hasTools && hasReasoning && provider.protocol !== "anthropic" && provider.protocol !== "gemini");
+
     // Determine which endpoint to use. If the provider speaks the Responses
-    // protocol, always use its 'responses' endpoint (the gateway converts
-    // chat completions → responses transparently). Otherwise use the endpoint
-    // matching the client's requested type.
+    // protocol (or was auto-upgraded), use its 'responses' endpoint if available.
     let endpoint = provider.endpoints.find((e) => e.type === detected.type);
-    if (provider.protocol === "responses") {
+    if (provider.protocol === "responses" || autoUpgradeResponses) {
       endpoint = provider.endpoints.find((e) => e.type === "responses") || endpoint;
     }
     if (!endpoint) continue;
@@ -421,13 +433,12 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
 
       // ── Protocol detection ──
       const isAnthropicProvider = provider.protocol === "anthropic";
-      const isResponsesProvider = provider.protocol === "responses";
+      const isResponsesProvider = provider.protocol === "responses" || autoUpgradeResponses;
       const isGeminiProvider = provider.protocol === "gemini";
       const clientWantsStream = bodyJson && typeof (bodyJson as Record<string, unknown>).stream === "boolean"
         ? (bodyJson as Record<string, unknown>).stream as boolean
         : false;
 
-      // Build target URL: provider baseUrl + endpoint path + original query
       // Build target URL: provider baseUrl + endpoint path + original query
       let target: URL;
       if (isGeminiProvider && model) {
@@ -440,6 +451,11 @@ export async function handleProxyRequest(req: Request): Promise<Response> {
         // ── Auto-correct double /v1/ from dashboard misconfigurations ──
         if (base.endsWith("/v1") && epRaw.startsWith("/v1/")) {
           epRaw = epRaw.substring(3);
+        }
+
+        // Route chat/completions → responses when responses protocol is active
+        if (isResponsesProvider && epRaw.includes("chat/completions")) {
+          epRaw = epRaw.replace(/chat\/completions/g, "responses");
         }
 
         // ── Dynamic model interpolation ──
